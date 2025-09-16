@@ -26,7 +26,7 @@ class TableDatabase:
         # Create knx_doc_tables table
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS knx_doc_tables (
-                id INTEGER,
+                id INTEGER PRIMARY KEY,
                 name VARCHAR,
                 description TEXT,
                 calculated_fields_description TEXT,
@@ -37,7 +37,7 @@ class TableDatabase:
         # Create knx_doc_columns table
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS knx_doc_columns (
-                id INTEGER,
+                id INTEGER PRIMARY KEY,
                 table_id INTEGER,
                 field_name VARCHAR,
                 description TEXT,
