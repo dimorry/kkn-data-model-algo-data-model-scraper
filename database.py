@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any
 
 
 class TableDatabase:
-    def __init__(self, db_path: str = "tables.duckdb", logger=None):
+    def __init__(self, db_path: str = "mappings.duckdb", logger=None):
         self.db_path = db_path
         self.logger = logger or logging.getLogger(__name__)
         self.conn = None
@@ -22,10 +22,10 @@ class TableDatabase:
             raise
 
     def _create_tables(self):
-        """Create the main tables and columns tables"""
-        # Create tables table
+        """Create the main knx_doc_tables and knx_doc_columns tables"""
+        # Create knx_doc_tables table
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS tables (
+            CREATE TABLE IF NOT EXISTS knx_doc_tables (
                 id INTEGER,
                 name VARCHAR,
                 description TEXT,
@@ -34,9 +34,9 @@ class TableDatabase:
             )
         """)
 
-        # Create columns table
+        # Create knx_doc_columns table
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS columns (
+            CREATE TABLE IF NOT EXISTS knx_doc_columns (
                 id INTEGER,
                 table_id INTEGER,
                 field_name VARCHAR,
@@ -44,7 +44,11 @@ class TableDatabase:
                 data_type VARCHAR,
                 is_key VARCHAR,
                 is_calculated BOOLEAN,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                referenced_table_id INTEGER,
+                display_on_export BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (table_id) REFERENCES knx_doc_tables(id),
+                FOREIGN KEY (referenced_table_id) REFERENCES knx_doc_tables(id)
             )
         """)
 
@@ -69,7 +73,7 @@ class TableDatabase:
                 updated_calc_desc = self._merge_descriptions(existing_table['calculated_fields_description'], calculated_fields_description)
 
                 self.conn.execute("""
-                    UPDATE tables
+                    UPDATE knx_doc_tables
                     SET description = ?, calculated_fields_description = ?
                     WHERE id = ?
                 """, [updated_description, updated_calc_desc, table_id])
@@ -82,11 +86,11 @@ class TableDatabase:
 
             else:
                 # Insert new table
-                result = self.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM tables").fetchone()
+                result = self.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM knx_doc_tables").fetchone()
                 table_id = result[0]
 
                 self.conn.execute("""
-                    INSERT INTO tables (id, name, description, calculated_fields_description)
+                    INSERT INTO knx_doc_tables (id, name, description, calculated_fields_description)
                     VALUES (?, ?, ?, ?)
                 """, [table_id, table_name, description, calculated_fields_description])
 
@@ -131,22 +135,24 @@ class TableDatabase:
 
                     if field_name and field_name not in existing_field_names:
                         # Get the next available column ID
-                        result = self.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM columns").fetchone()
+                        result = self.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM knx_doc_columns").fetchone()
                         column_id = result[0]
 
                         description = column_data[1] if len(column_data) > 1 else ""
                         data_type = column_data[2] if len(column_data) > 2 else ""
                         is_key = column_data[3] if len(column_data) > 3 else ""
                         is_calculated = column_data[4] if len(column_data) > 4 else False
+                        referenced_table_id = column_data[5] if len(column_data) > 5 else None
+                        display_on_export = column_data[6] if len(column_data) > 6 else False
 
                         self.conn.execute("""
-                            INSERT INTO columns (
+                            INSERT INTO knx_doc_columns (
                                 id, table_id, field_name, description, data_type, is_key,
-                                is_calculated
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                                is_calculated, referenced_table_id, display_on_export
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, [
                             column_id, table_id, field_name, description, data_type, is_key,
-                            is_calculated
+                            is_calculated, referenced_table_id, display_on_export
                         ])
 
                         new_columns_count += 1
@@ -169,7 +175,7 @@ class TableDatabase:
             # Ensure we have at least the required fields
             if len(column_data) >= 5:
                 # Get the next available column ID
-                result = self.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM columns").fetchone()
+                result = self.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM knx_doc_columns").fetchone()
                 column_id = result[0]
 
                 field_name = column_data[0] if len(column_data) > 0 else ""
@@ -177,15 +183,17 @@ class TableDatabase:
                 data_type = column_data[2] if len(column_data) > 2 else ""
                 is_key = column_data[3] if len(column_data) > 3 else ""
                 is_calculated = column_data[4] if len(column_data) > 4 else False
+                referenced_table_id = column_data[5] if len(column_data) > 5 else None
+                display_on_export = column_data[6] if len(column_data) > 6 else False
 
                 self.conn.execute("""
-                    INSERT INTO columns (
+                    INSERT INTO knx_doc_columns (
                         id, table_id, field_name, description, data_type, is_key,
-                        is_calculated
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        is_calculated, referenced_table_id, display_on_export
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, [
                     column_id, table_id, field_name, description, data_type, is_key,
-                    is_calculated
+                    is_calculated, referenced_table_id, display_on_export
                 ])
 
                 self.logger.debug(f"Inserted column: {field_name} (calculated: {is_calculated})")
@@ -195,7 +203,7 @@ class TableDatabase:
         try:
             result = self.conn.execute("""
                 SELECT id, name, description, calculated_fields_description, created_at
-                FROM tables WHERE name = ?
+                FROM knx_doc_tables WHERE name = ?
             """, [table_name]).fetchone()
 
             if result:
@@ -212,12 +220,25 @@ class TableDatabase:
             self.logger.error(f"Failed to get table by name: {e}")
             return None
 
+    def get_table_id_by_name(self, table_name: str) -> Optional[int]:
+        """Get table ID by name"""
+        try:
+            result = self.conn.execute("""
+                SELECT id FROM knx_doc_tables WHERE name = ?
+            """, [table_name]).fetchone()
+
+            return result[0] if result else None
+
+        except Exception as e:
+            self.logger.error(f"Failed to get table ID by name: {e}")
+            return None
+
     def get_columns_for_table(self, table_id: int) -> List[Dict]:
         """Get all columns for a table"""
         try:
             results = self.conn.execute("""
-                SELECT field_name, description, data_type, is_key, is_calculated
-                FROM columns WHERE table_id = ?
+                SELECT field_name, description, data_type, is_key, is_calculated, referenced_table_id, display_on_export
+                FROM knx_doc_columns WHERE table_id = ?
                 ORDER BY id
             """, [table_id]).fetchall()
 
@@ -228,7 +249,9 @@ class TableDatabase:
                     'description': row[1],
                     'data_type': row[2],
                     'is_key': row[3],
-                    'is_calculated': row[4]
+                    'is_calculated': row[4],
+                    'referenced_table_id': row[5],
+                    'display_on_export': row[6]
                 })
 
             return columns
@@ -242,7 +265,7 @@ class TableDatabase:
         try:
             results = self.conn.execute("""
                 SELECT id, name, description, calculated_fields_description, created_at
-                FROM tables ORDER BY created_at DESC
+                FROM knx_doc_tables ORDER BY created_at DESC
             """).fetchall()
 
             tables = []

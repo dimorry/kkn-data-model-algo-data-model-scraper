@@ -11,7 +11,7 @@ from database import TableDatabase
 
 
 class EdgeSessionScraper:
-    def __init__(self, logger_config=None, db_path="tables.duckdb"):
+    def __init__(self, logger_config=None, db_path="mappings.duckdb"):
         self.browser = None
         self.context = None
         self.page = None
@@ -326,6 +326,32 @@ class EdgeSessionScraper:
                         data_type = cells[2].inner_text().strip()
                         key = cells[3].inner_text().strip()
 
+                        # Extract referenced table for reference columns
+                        referenced_table_id = None
+                        if (data_type.lower().startswith('reference') and not is_calculated):
+                            # Look for "Referenced table: " in the description
+                            if "Referenced table: " in description:
+                                # Extract text after "Referenced table: "
+                                ref_start = description.find("Referenced table: ") + len("Referenced table: ")
+                                # Find the end of the table name (until next sentence, period, or newline)
+                                ref_text = description[ref_start:]
+                                # Split by common delimiters and take the first part
+                                for delimiter in ['.', '\n', ';', ',']:
+                                    if delimiter in ref_text:
+                                        ref_text = ref_text.split(delimiter)[0]
+                                        break
+                                referenced_table_name = ref_text.strip()
+
+                                # Look up the table ID by name
+                                referenced_table_id = self.db.get_table_id_by_name(referenced_table_name)
+                                if referenced_table_id:
+                                    self.logger.debug(f"Extracted referenced table '{referenced_table_name}' (ID: {referenced_table_id}) for field '{field_name}'")
+                                else:
+                                    self.logger.warning(f"Referenced table '{referenced_table_name}' not found in database for field '{field_name}'")
+
+                        # Determine if this field should be displayed on export (True for key fields)
+                        display_on_export = key.lower() in ['true', 'yes', '1', 'key', 'primary'] if key else False
+
                         # Create column data matching the data structure format
                         column_data = [
                             field_name,           # FieldName
@@ -333,6 +359,8 @@ class EdgeSessionScraper:
                             data_type,           # Data Type
                             key,                 # is_key (renamed from Key)
                             is_calculated,       # IsCalculated (False for first table, True for second)
+                            referenced_table_id, # referenced_table_id
+                            display_on_export,   # display_on_export
                         ]
 
                         columns_data.append(column_data)
@@ -391,10 +419,14 @@ def main():
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/billofmaterial(mfg)_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/bomalternate_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/customer_table_.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/demandorder_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/engineeringchange_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/forecastdetail_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandactual_t.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandorder_ta.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalreceiptheader_t.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalreceipt_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/independentdemand_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/onhand_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/part_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partsource_table.htm",
@@ -402,6 +434,7 @@ def main():
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/routing_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/scheduledreceipt_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/source_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/supplyorder_table.htm",
         ]
     if scraper.load_session_data():
         logger.info(f"Starting to scrape {len(pages_to_scrape)} pages")

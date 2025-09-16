@@ -10,7 +10,7 @@ from datetime import datetime
 from logger_config import LoggerConfig
 
 
-def export_to_excel(db_path="tables.duckdb", output_file="tables_export.xlsx", overwrite=False):
+def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx", overwrite=False):
     """Export tables and columns data to Excel with separate tabs"""
 
     # Setup logging
@@ -57,15 +57,15 @@ def export_to_excel(db_path="tables.duckdb", output_file="tables_export.xlsx", o
                 description,
                 calculated_fields_description,
                 created_at
-            FROM tables
+            FROM knx_doc_tables
             ORDER BY id
         """).fetchdf()
 
         logger.info(f"Found {len(tables_df)} tables")
 
-        # Query columns data
+        # Query base columns data
         logger.info("Querying columns data...")
-        columns_df = con.execute("""
+        base_columns_df = con.execute("""
             SELECT
                 c.id,
                 c.table_id,
@@ -75,11 +75,83 @@ def export_to_excel(db_path="tables.duckdb", output_file="tables_export.xlsx", o
                 c.data_type,
                 c.is_key,
                 c.is_calculated,
-                c.created_at
-            FROM columns c
-            LEFT JOIN tables t ON c.table_id = t.id
+                rt.name as referenced_table,
+                c.display_on_export,
+                c.created_at,
+                c.referenced_table_id
+            FROM knx_doc_columns c
+            LEFT JOIN knx_doc_tables t ON c.table_id = t.id
+            LEFT JOIN knx_doc_tables rt ON c.referenced_table_id = rt.id
             ORDER BY c.table_id, c.id
         """).fetchdf()
+
+        # Expand reference fields with display_on_export fields from referenced tables
+        logger.info("Expanding reference fields with display_on_export fields...")
+        expanded_rows = []
+
+        for _, row in base_columns_df.iterrows():
+            # Add the original row
+            expanded_rows.append(row.to_dict())
+
+            # If this is a reference field and has a referenced table, add expanded fields
+            if (row['data_type'] and str(row['data_type']).lower().startswith('reference') and
+                row['referenced_table_id'] is not None and not row['is_calculated']):
+
+                # Get display_on_export fields from the referenced table
+                ref_fields_df = con.execute("""
+                    SELECT
+                        c.field_name,
+                        c.description,
+                        c.data_type,
+                        c.is_key,
+                        c.is_calculated,
+                        rt2.name as ref_referenced_table
+                    FROM knx_doc_columns c
+                    LEFT JOIN knx_doc_tables rt2 ON c.referenced_table_id = rt2.id
+                    WHERE c.table_id = ? AND c.display_on_export = TRUE
+                    ORDER BY c.id
+                """, [row['referenced_table_id']]).fetchdf()
+
+                # Add expanded fields
+                for _, ref_field in ref_fields_df.iterrows():
+                    expanded_field_name = f"{row['table_name']}.{row['referenced_table']}.{ref_field['field_name']}"
+                    expanded_description = f"[From {row['referenced_table']}] {ref_field['description']}"
+
+                    expanded_row = {
+                        'id': f"{row['id']}.{ref_field['field_name']}",  # Unique identifier
+                        'table_id': row['table_id'],
+                        'table_name': row['table_name'],
+                        'field_name': expanded_field_name,
+                        'description': expanded_description,
+                        'data_type': ref_field['data_type'],
+                        'is_key': ref_field['is_key'],
+                        'is_calculated': ref_field['is_calculated'],
+                        'referenced_table': ref_field['ref_referenced_table'],
+                        'display_on_export': True,  # These are expanded because they have display_on_export=True
+                        'created_at': row['created_at']
+                    }
+                    expanded_rows.append(expanded_row)
+
+                logger.info(f"Expanded reference field '{row['field_name']}' with {len(ref_fields_df)} display fields from '{row['referenced_table']}'")
+
+        # Convert back to DataFrame
+        columns_df = pd.DataFrame(expanded_rows)
+
+        # Reorder columns according to specified order: table_name, is_key, field_name, is_calculated
+        if not columns_df.empty:
+            # Define the desired column order
+            desired_order = ['table_name', 'is_key', 'field_name', 'is_calculated']
+
+            # Get remaining columns that aren't in the desired order
+            remaining_cols = [col for col in columns_df.columns if col not in desired_order]
+
+            # Create final column order
+            final_order = desired_order + remaining_cols
+
+            # Reorder the DataFrame
+            columns_df = columns_df[final_order]
+
+            logger.info(f"Reordered columns in specified order: {desired_order}")
 
         logger.info(f"Found {len(columns_df)} columns")
 
@@ -130,9 +202,31 @@ def export_to_excel(db_path="tables.duckdb", output_file="tables_export.xlsx", o
                         adjusted_width = min(max_length + 2, 30)
                         worksheet.column_dimensions[column_letter].width = adjusted_width
 
-                # Set minimum row height for better text wrapping display
+                # Auto-adjust row heights based on text content
                 for row in worksheet.iter_rows():
-                    worksheet.row_dimensions[row[0].row].height = 30  # Minimum height for wrapped text
+                    max_lines_in_row = 1
+                    row_number = row[0].row
+
+                    # Calculate the maximum number of lines needed in this row
+                    for cell in row:
+                        if cell.value is not None:
+                            cell_text = str(cell.value)
+                            column_width = worksheet.column_dimensions[cell.column_letter].width or 10
+
+                            # Estimate lines needed based on text length and column width
+                            # Roughly 1.2 characters per width unit in Excel
+                            chars_per_line = max(int(column_width * 1.2), 10)
+                            lines_needed = max(1, len(cell_text) // chars_per_line + (1 if len(cell_text) % chars_per_line else 0))
+
+                            # Also count explicit line breaks
+                            explicit_lines = cell_text.count('\n') + 1
+                            lines_needed = max(lines_needed, explicit_lines)
+
+                            max_lines_in_row = max(max_lines_in_row, lines_needed)
+
+                    # Set row height based on content (minimum 20, with 15 points per line)
+                    calculated_height = max(20, max_lines_in_row * 15)
+                    worksheet.row_dimensions[row_number].height = calculated_height
 
                 # Add auto-filter to all columns
                 if worksheet.max_row > 1:  # Only add filter if there's data beyond headers
