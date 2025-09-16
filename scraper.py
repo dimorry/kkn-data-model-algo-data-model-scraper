@@ -1,5 +1,7 @@
 import json
 import logging
+import random
+import time
 from datetime import datetime
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -384,12 +386,37 @@ def main():
 
     # Method 2: Use saved session data
     logger.info("Attempting to load session data")
+    pages_to_scrape = [
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/allocation_table_.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/billofmaterial(mfg)_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/bomalternate_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/customer_table_.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/engineeringchange_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/forecastdetail_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandactual_t.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalreceipt_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/onhand_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/part_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partsource_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partcustomer.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/routing_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/scheduledreceipt_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/source_table.htm",
+        ]
     if scraper.load_session_data():
-        data = scraper.scrape_page("https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/part_table.htm")
-        if data:
-            logger.info("Session-based scraping completed successfully")
-        else:
-            logger.error("Session-based scraping failed")
+        logger.info(f"Starting to scrape {len(pages_to_scrape)} pages")
+        for i, url in enumerate(pages_to_scrape, 1):
+            if i > 1:  # Skip wait for the first page
+                wait_time = random.randint(5, 38)
+                logger.info(f"Waiting {wait_time} seconds before scraping page {i}...")
+                time.sleep(wait_time)
+            logger.info(f"Scraping page {i}/{len(pages_to_scrape)}: {url}")
+            data = scraper.scrape_page(url)
+            if data:
+                logger.info(f"Successfully scraped page {i}: {data.get('table_name', 'Unknown')}")
+            else:
+                logger.error(f"Failed to scrape page {i}: {url}")
+        logger.info("All pages processed")
 
     scraper.close()
     logger.info("Scraper application finished")
