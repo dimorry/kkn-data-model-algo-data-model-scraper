@@ -10,6 +10,95 @@ from datetime import datetime
 from logger_config import LoggerConfig
 
 
+def _expand_reference_recursively(con, field_info, current_path, visited_tables, max_depth, root_field_props, logger):
+    """
+    Recursively expand reference fields to build complete dotted paths
+
+    Args:
+        con: Database connection
+        field_info: Dict with field information including referenced_table_id, data_type
+        current_path: Current dotted path (e.g., "Table.Ref1.Ref2")
+        visited_tables: Set of table IDs already visited (cycle detection)
+        max_depth: Maximum recursion depth remaining
+        root_field_props: Properties from the original reference field (is_key, display_on_export)
+        logger: Logger instance
+
+    Returns:
+        List of expanded field dictionaries
+    """
+    # Base cases
+    if max_depth <= 0:
+        logger.debug(f"Max depth reached for path: {current_path}")
+        return []
+
+    if field_info.get('referenced_table_id') in visited_tables:
+        logger.debug(f"Cycle detected for path: {current_path}, skipping")
+        return []
+
+    # If this is not a reference field, return it as a terminal field
+    if (not field_info.get('data_type') or
+        not str(field_info['data_type']).lower().startswith('reference') or
+        field_info.get('is_calculated') or
+        not field_info.get('referenced_table_id')):
+
+        # Create terminal expanded field
+        # Extract the origin table name from the current path (the last table before the final field)
+        path_parts = current_path.split('.')
+        origin_table = path_parts[-2] if len(path_parts) >= 2 else 'Unknown'
+
+        expanded_field = {
+            'id': f"expanded_{current_path}",
+            'table_id': root_field_props['table_id'],
+            'table_name': root_field_props['table_name'],
+            'field_name': f"    {current_path}",  # Add four spaces indentation
+            'description': f"[From {origin_table}] {field_info.get('description', '')}",
+            'data_type': field_info.get('data_type', ''),
+            'is_key': root_field_props['is_key'],
+            'is_calculated': field_info.get('is_calculated', False),
+            'referenced_table': field_info.get('ref_referenced_table'),
+            'display_on_export': root_field_props['display_on_export'],
+            'created_at': root_field_props['created_at']
+        }
+        return [expanded_field]
+
+    # This is a reference field, so expand it further
+    expanded_fields = []
+    new_visited = visited_tables.copy()
+    new_visited.add(field_info['referenced_table_id'])
+
+    logger.debug(f"Expanding reference field at path: {current_path}, referenced_table_id: {field_info['referenced_table_id']}")
+
+    # Get display_on_export fields from the referenced table
+    ref_fields_df = con.execute("""
+        SELECT
+            c.field_name,
+            c.description,
+            c.data_type,
+            c.is_key,
+            c.is_calculated,
+            c.referenced_table_id,
+            rt2.name as ref_referenced_table
+        FROM knx_doc_columns c
+        LEFT JOIN knx_doc_tables rt2 ON c.referenced_table_id = rt2.id
+        WHERE c.table_id = ? AND c.display_on_export = TRUE
+        ORDER BY c.id
+    """, [field_info['referenced_table_id']]).fetchdf()
+
+    logger.debug(f"Found {len(ref_fields_df)} display_on_export fields for referenced table ID {field_info['referenced_table_id']}")
+
+    # Recursively expand each display field
+    for _, ref_field in ref_fields_df.iterrows():
+        new_path = f"{current_path}.{ref_field['field_name']}"
+
+        # Recursively expand this field
+        sub_expanded = _expand_reference_recursively(
+            con, ref_field.to_dict(), new_path, new_visited, max_depth - 1, root_field_props, logger
+        )
+        expanded_fields.extend(sub_expanded)
+
+    return expanded_fields
+
+
 def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx", overwrite=False):
     """Export tables and columns data to Excel with separate tabs"""
 
@@ -93,56 +182,36 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
             # Add the original row
             expanded_rows.append(row.to_dict())
 
-            # If this is a reference field and has a referenced table, add expanded fields
+            # If this is a reference field and has a referenced table, add recursively expanded fields
             if (row['data_type'] and str(row['data_type']).lower().startswith('reference') and
                 row['referenced_table_id'] is not None and not row['is_calculated']):
 
                 logger.debug(f"[{row['table_name']}] Processing reference field '{row['field_name']}' (data_type: {row['data_type']}, referenced_table_id: {row['referenced_table_id']}, referenced_table: {row['referenced_table']})")
 
-                # Get display_on_export fields from the referenced table
-                ref_fields_df = con.execute("""
-                    SELECT
-                        c.field_name,
-                        c.description,
-                        c.data_type,
-                        c.is_key,
-                        c.is_calculated,
-                        rt2.name as ref_referenced_table
-                    FROM knx_doc_columns c
-                    LEFT JOIN knx_doc_tables rt2 ON c.referenced_table_id = rt2.id
-                    WHERE c.table_id = ? AND c.display_on_export = TRUE
-                    ORDER BY c.id
-                """, [row['referenced_table_id']]).fetchdf()
+                # Set up root field properties to inherit through recursion
+                root_field_props = {
+                    'table_id': row['table_id'],
+                    'table_name': row['table_name'],
+                    'is_key': row['is_key'],
+                    'display_on_export': row['display_on_export'],
+                    'created_at': row['created_at']
+                }
 
-                logger.debug(f"[{row['table_name']}] Found {len(ref_fields_df)} display_on_export fields for referenced table ID {row['referenced_table_id']}")
-                if len(ref_fields_df) > 0:
-                    logger.debug(f"[{row['table_name']}] Display fields: {list(ref_fields_df['field_name'])}")
+                # Use recursive expansion with max depth of 5 levels
+                initial_path = f"{row['table_name']}.{row['referenced_table']}"
+                recursive_expanded = _expand_reference_recursively(
+                    con, row.to_dict(), initial_path, set(), 5, root_field_props, logger
+                )
 
-                # Add expanded fields
-                for _, ref_field in ref_fields_df.iterrows():
-                    expanded_field_name = f"{row['table_name']}.{row['referenced_table']}.{ref_field['field_name']}"
-                    expanded_description = f"[From {row['referenced_table']}] {ref_field['description']}"
+                # Add all recursively expanded fields
+                expanded_rows.extend(recursive_expanded)
 
-                    expanded_row = {
-                        'id': f"{row['id']}.{ref_field['field_name']}",  # Unique identifier
-                        'table_id': row['table_id'],
-                        'table_name': row['table_name'],
-                        'field_name': expanded_field_name,
-                        'description': expanded_description,
-                        'data_type': ref_field['data_type'],
-                        'is_key': ref_field['is_key'],
-                        'is_calculated': ref_field['is_calculated'],
-                        'referenced_table': ref_field['ref_referenced_table'],
-                        'display_on_export': True,  # These are expanded because they have display_on_export=True
-                        'created_at': row['created_at']
-                    }
-                    expanded_rows.append(expanded_row)
-                    logger.debug(f"[{row['table_name']}] Added expanded field: {expanded_field_name}")
-
-                if len(ref_fields_df) > 0:
-                    logger.info(f"[{row['table_name']}] Expanded reference field '{row['field_name']}' with {len(ref_fields_df)} display fields from '{row['referenced_table']}'")
+                if recursive_expanded:
+                    logger.info(f"[{row['table_name']}] Recursively expanded reference field '{row['field_name']}' into {len(recursive_expanded)} fields")
+                    for expanded in recursive_expanded:
+                        logger.debug(f"[{row['table_name']}] Added recursive field: {expanded['field_name']}")
                 else:
-                    logger.warning(f"[{row['table_name']}] No display_on_export fields found for reference field '{row['field_name']}' -> '{row['referenced_table']}' (ID: {row['referenced_table_id']})")
+                    logger.warning(f"[{row['table_name']}] No recursive expansion results for reference field '{row['field_name']}' -> '{row['referenced_table']}' (ID: {row['referenced_table_id']})")
 
         # Convert back to DataFrame
         columns_df = pd.DataFrame(expanded_rows)
@@ -244,6 +313,22 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                     max_col_letter = get_column_letter(worksheet.max_column)
                     worksheet.auto_filter.ref = f"A1:{max_col_letter}{worksheet.max_row}"
                     logger.debug(f"Added auto-filter to {sheet_name} tab: A1:{max_col_letter}{worksheet.max_row}")
+
+                # Hide ID columns in the Columns sheet
+                if sheet_name == 'Columns':
+                    id_columns_to_hide = ['id', 'table_id', 'referenced_table_id']
+
+                    # Find and hide the ID columns
+                    for col_idx, column in enumerate(worksheet.iter_cols(1, worksheet.max_column), 1):
+                        column_header = column[0].value
+                        if column_header and str(column_header).lower() in id_columns_to_hide:
+                            col_letter = get_column_letter(col_idx)
+                            worksheet.column_dimensions[col_letter].hidden = True
+                            logger.debug(f"Hidden column '{column_header}' ({col_letter}) in {sheet_name} tab")
+
+                # Freeze the header row (first row) for both worksheets
+                worksheet.freeze_panes = 'A2'  # Freeze everything above row 2 (i.e., row 1)
+                logger.debug(f"Froze header row in {sheet_name} tab")
 
         con.close()
 
