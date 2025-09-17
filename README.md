@@ -17,11 +17,25 @@ A specialized web scraper for extracting table documentation from Kinaxis help p
 - **Relational Schema**: Proper table relationships and foreign keys
 - **Data Integrity**: Prevents duplicate columns while preserving existing data
 
-### 📊 **Excel Export**
-- **Two-Tab Format**: Tables and Columns in separate worksheets
-- **Professional Formatting**: Text wrapping, auto-filters, optimized column widths
-- **Smart Columns**: Description columns get wider spacing
-- **Filter-Ready**: Auto-filters on all columns for easy data analysis
+### 📊 **Advanced Excel Export**
+- **🔗 Recursive Reference Expansion**: Automatically expands reference fields to show complete relationship chains
+  - Example: `Allocation.ScheduledReceipt.Order.Site.Value` shows the full path through multiple tables
+  - Detects and prevents infinite loops with cycle detection
+  - Configurable maximum depth (default: 5 levels)
+  - Inherits display settings from root reference field
+- **📋 Two-Tab Format**: Tables and Columns in separate worksheets with frozen headers
+- **🎯 Smart Field Organization**:
+  - Custom column order: table_name → is_key → field_name → is_calculated
+  - Indented expanded field names (4 spaces) for visual hierarchy
+  - Origin table identification in descriptions: `[From TableName]`
+- **🔒 Clean Interface**:
+  - ID columns (id, table_id, referenced_table_id) hidden but preserved
+  - Fixed header rows for easy navigation through large datasets
+- **✨ Professional Formatting**:
+  - Auto-adjusting row heights based on text content
+  - Text wrapping on all cells with optimal column widths
+  - Auto-filters on all columns for advanced data analysis
+  - Description columns get enhanced spacing (up to 80 characters wide)
 
 ## Installation
 
@@ -84,49 +98,84 @@ msedge.exe --remote-debugging-port=9222
 ```python
 from export_to_excel import export_to_excel
 
-# Export database to Excel
+# Export database to Excel with recursive expansion
 success = export_to_excel(
-    db_path="kinaxis_tables.duckdb",
-    output_file="kinaxis_documentation.xlsx",
+    db_path="mappings.duckdb",
+    output_file="kinaxis_tables_export.xlsx",
     overwrite=True
 )
 
 if success:
     print("✅ Excel export completed!")
+    print("Features included:")
+    print("  🔗 Recursive reference field expansion")
+    print("  📋 Frozen headers on both worksheets")
+    print("  🎯 Smart column organization and indentation")
+    print("  🔒 Hidden ID columns for clean viewing")
+    print("  ✨ Professional formatting with auto-sizing")
+```
+
+### Advanced Export Features
+The Excel export includes sophisticated relationship mapping:
+
+```python
+# Example of recursive expansion output:
+# Original field: Part (Reference)
+# Expanded fields:
+#   Part.Name                    # Direct field from Part table
+#   Part.Site.Value             # Site reference from Part table
+#
+# Original field: ScheduledReceipt (Reference)
+# Expanded fields:
+#   ScheduledReceipt.Line        # Direct field
+#   ScheduledReceipt.Order.Id    # SupplyOrder reference fields
+#   ScheduledReceipt.Order.Type
+#   ScheduledReceipt.Order.Site.Value  # Nested Site reference
 ```
 
 ## Project Structure
 
 ```
-kkn-doc-scraper/
-├── scraper.py              # Main scraper class
-├── database.py             # DuckDB integration
-├── export_to_excel.py      # Excel export functionality
+kkn-data-model-algo-data-model-scraper/
+├── scraper.py              # Main scraper class with reference extraction
+├── database.py             # DuckDB integration with foreign keys
+├── export_to_excel.py      # Advanced Excel export with recursive expansion
 ├── logger_config.py        # Logging configuration
 ├── test_database.py        # Database testing
 ├── session_data.json       # Saved browser session
-├── kinaxis_tables.duckdb   # Database file
+├── mappings.duckdb         # Database file (knx_doc_tables/knx_doc_columns)
+├── kinaxis_tables_export.xlsx  # Generated Excel export
 └── README.md              # This file
 ```
 
 ## Database Schema
 
-### Tables Table
+### knx_doc_tables Table
 - `id`: Primary key
 - `name`: Table name (extracted from h1)
 - `description`: Table description (between h1 and first table)
 - `calculated_fields_description`: Calculated fields info (between h2 and second table)
 - `created_at`: Timestamp
 
-### Columns Table
+### knx_doc_columns Table
 - `id`: Primary key
-- `table_id`: Foreign key to tables
+- `table_id`: Foreign key to knx_doc_tables
 - `field_name`: Column name
 - `description`: Field description
-- `data_type`: Data type
-- `is_key`: Key information
+- `data_type`: Data type (e.g., Reference, String, Integer)
+- `is_key`: Key information ("Yes" for key fields)
 - `is_calculated`: Boolean (False for regular fields, True for calculated)
+- `referenced_table_id`: Foreign key to knx_doc_tables (for Reference fields)
+- `display_on_export`: Boolean (controls which fields appear in recursive expansion)
 - `created_at`: Timestamp
+
+### Reference Field Expansion
+The system automatically:
+- Detects Reference data types in column descriptions
+- Extracts referenced table names using intelligent parsing
+- Links referenced_table_id to the appropriate table
+- Marks key fields with display_on_export=True for expansion
+- Generates recursive field paths showing complete relationship chains
 
 ## Logging
 
@@ -158,14 +207,20 @@ python test_database.py
 - Handles authentication cookies and state
 
 ### Database Configuration
-- Default database: `tables.duckdb`
+- Default database: `mappings.duckdb`
+- Schema: `knx_doc_tables` and `knx_doc_columns` with foreign key relationships
 - Configurable path in scraper initialization
 - Automatic schema creation and migration
+- Reference field linking with intelligent table name extraction
 
 ### Export Settings
-- Text wrapping on all description columns
-- Auto-filters for easy data exploration
-- Professional formatting for presentations
+- **Recursive Expansion**: Maximum depth of 5 levels (configurable)
+- **Column Organization**: table_name → is_key → field_name → is_calculated
+- **Visual Formatting**: 4-space indentation for expanded fields
+- **Hidden Columns**: ID fields hidden but preserved for data integrity
+- **Text Handling**: Auto-wrapping with dynamic row heights
+- **Navigation**: Frozen headers and auto-filters for large datasets
+- **Professional Output**: Optimized for analysis and presentations
 
 ## Contributing
 
@@ -174,6 +229,26 @@ python test_database.py
 3. Include error handling for robustness
 4. Update tests for new functionality
 5. Document any new configuration options
+
+## Performance & Capabilities
+
+### Current Dataset
+- **39 Tables** documented with complete schema information
+- **1,251 Total Columns** including recursive expansions
+- **Multi-level Relationships** with up to 5 levels of depth
+- **Comprehensive Coverage** of Kinaxis data model relationships
+
+### Export Performance
+- ✅ **Intelligent Cycle Detection**: Prevents infinite loops in complex relationships
+- ✅ **Optimized Queries**: Efficient database operations with proper indexing
+- ✅ **Memory Management**: Handles large datasets with streaming processing
+- ✅ **Professional Output**: Publication-ready Excel files with advanced formatting
+
+### Key Relationship Examples
+- `Allocation.ScheduledReceipt.Order.Site.Value` - 4-level expansion
+- `Allocation.Part.Site.Value` - Cross-table site references
+- `HistoricalDemandHeader.PartCustomer.Customer.Site.Value` - Complex nested relationships
+- `SourceConstraint.PartSource.Source.DestinationSite.Value` - Supply chain mappings
 
 ## License
 
