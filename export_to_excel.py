@@ -97,6 +97,8 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
             if (row['data_type'] and str(row['data_type']).lower().startswith('reference') and
                 row['referenced_table_id'] is not None and not row['is_calculated']):
 
+                logger.debug(f"[{row['table_name']}] Processing reference field '{row['field_name']}' (data_type: {row['data_type']}, referenced_table_id: {row['referenced_table_id']}, referenced_table: {row['referenced_table']})")
+
                 # Get display_on_export fields from the referenced table
                 ref_fields_df = con.execute("""
                     SELECT
@@ -111,6 +113,10 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                     WHERE c.table_id = ? AND c.display_on_export = TRUE
                     ORDER BY c.id
                 """, [row['referenced_table_id']]).fetchdf()
+
+                logger.debug(f"[{row['table_name']}] Found {len(ref_fields_df)} display_on_export fields for referenced table ID {row['referenced_table_id']}")
+                if len(ref_fields_df) > 0:
+                    logger.debug(f"[{row['table_name']}] Display fields: {list(ref_fields_df['field_name'])}")
 
                 # Add expanded fields
                 for _, ref_field in ref_fields_df.iterrows():
@@ -131,8 +137,12 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                         'created_at': row['created_at']
                     }
                     expanded_rows.append(expanded_row)
+                    logger.debug(f"[{row['table_name']}] Added expanded field: {expanded_field_name}")
 
-                logger.info(f"Expanded reference field '{row['field_name']}' with {len(ref_fields_df)} display fields from '{row['referenced_table']}'")
+                if len(ref_fields_df) > 0:
+                    logger.info(f"[{row['table_name']}] Expanded reference field '{row['field_name']}' with {len(ref_fields_df)} display fields from '{row['referenced_table']}'")
+                else:
+                    logger.warning(f"[{row['table_name']}] No display_on_export fields found for reference field '{row['field_name']}' -> '{row['referenced_table']}' (ID: {row['referenced_table_id']})")
 
         # Convert back to DataFrame
         columns_df = pd.DataFrame(expanded_rows)

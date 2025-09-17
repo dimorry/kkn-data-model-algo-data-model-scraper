@@ -1,4 +1,6 @@
 *.xlsx
+*.duckdb
+
 # Python
 __pycache__/
 *.py[cod]

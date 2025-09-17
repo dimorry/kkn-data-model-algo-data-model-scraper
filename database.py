@@ -14,9 +14,14 @@ class TableDatabase:
     def _initialize_database(self):
         """Initialize DuckDB connection and create tables"""
         try:
+            # Log the absolute path to verify we're using the right database
+            from pathlib import Path
+            abs_path = Path(self.db_path).resolve()
+            self.logger.info(f"Connecting to database at: {abs_path}")
+
             self.conn = duckdb.connect(self.db_path)
             self._create_tables()
-            self.logger.info(f"Database initialized at {self.db_path}")
+            self.logger.info(f"Database initialized successfully at {abs_path}")
         except Exception as e:
             self.logger.error(f"Failed to initialize database: {e}")
             raise
@@ -60,45 +65,33 @@ class TableDatabase:
                          columns_data: List[List[Any]] = None) -> int:
         """Insert or update table data and return the table ID"""
         try:
-            # Check if table already exists
+            # Get existing table ID or create new one
             existing_table = self.get_table_by_name(table_name)
 
             if existing_table:
-                # Update existing table
                 table_id = existing_table['id']
-                self.logger.info(f"Table '{table_name}' already exists with ID {table_id}, updating...")
-
-                # Update table metadata (merge descriptions if they're different)
-                updated_description = self._merge_descriptions(existing_table['description'], description)
-                updated_calc_desc = self._merge_descriptions(existing_table['calculated_fields_description'], calculated_fields_description)
-
-                self.conn.execute("""
-                    UPDATE knx_doc_tables
-                    SET description = ?, calculated_fields_description = ?
-                    WHERE id = ?
-                """, [updated_description, updated_calc_desc, table_id])
-
-                self.logger.info(f"Updated table '{table_name}' metadata")
-
-                # Merge columns data if provided
-                if columns_data:
-                    self._merge_columns_data(table_id, columns_data)
-
+                action = "Updated"
             else:
-                # Insert new table
                 result = self.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM knx_doc_tables").fetchone()
                 table_id = result[0]
+                action = "Added"
 
-                self.conn.execute("""
-                    INSERT INTO knx_doc_tables (id, name, description, calculated_fields_description)
-                    VALUES (?, ?, ?, ?)
-                """, [table_id, table_name, description, calculated_fields_description])
+            # Always do full merge - replace all table data
+            self.conn.execute("""
+                INSERT INTO knx_doc_tables (
+                    id, name, description, calculated_fields_description, created_at
+                ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    calculated_fields_description = EXCLUDED.calculated_fields_description
+            """, [table_id, table_name, description, calculated_fields_description])
 
-                self.logger.info(f"Inserted new table '{table_name}' with ID {table_id}")
+            self.logger.info(f"{action} table '{table_name}' with ID {table_id}")
 
-                # Insert columns data if provided
-                if columns_data:
-                    self._insert_columns_data(table_id, columns_data)
+            # Always do full merge for columns data if provided
+            if columns_data:
+                self._merge_columns_data(table_id, columns_data)
 
             self.conn.commit()
             return table_id
@@ -108,36 +101,17 @@ class TableDatabase:
             self.conn.rollback()
             raise
 
-    def _merge_descriptions(self, existing: str, new: str) -> str:
-        """Merge two descriptions, preferring non-empty content"""
-        existing = existing or ""
-        new = new or ""
-
-        # If new description is longer or existing is empty, use new
-        if not existing or len(new) > len(existing):
-            return new
-
-        # Otherwise keep existing
-        return existing
 
     def _merge_columns_data(self, table_id: int, new_columns_data: List[List[Any]]):
         """Merge new columns data with existing columns"""
         try:
-            # Get existing columns
-            existing_columns = self.get_columns_for_table(table_id)
-            existing_field_names = {col['field_name'] for col in existing_columns}
-
-            # Only insert columns that don't already exist
             new_columns_count = 0
             for column_data in new_columns_data:
+
                 if len(column_data) >= 5:
                     field_name = column_data[0] if len(column_data) > 0 else ""
 
-                    if field_name and field_name not in existing_field_names:
-                        # Get the next available column ID
-                        result = self.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM knx_doc_columns").fetchone()
-                        column_id = result[0]
-
+                    if field_name:
                         description = column_data[1] if len(column_data) > 1 else ""
                         data_type = column_data[2] if len(column_data) > 2 else ""
                         is_key = column_data[3] if len(column_data) > 3 else ""
@@ -145,20 +119,46 @@ class TableDatabase:
                         referenced_table_id = column_data[5] if len(column_data) > 5 else None
                         display_on_export = column_data[6] if len(column_data) > 6 else False
 
-                        self.conn.execute("""
-                            INSERT INTO knx_doc_columns (
-                                id, table_id, field_name, description, data_type, is_key,
-                                is_calculated, referenced_table_id, display_on_export
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, [
-                            column_id, table_id, field_name, description, data_type, is_key,
-                            is_calculated, referenced_table_id, display_on_export
-                        ])
+                        # Get existing column ID if it exists, otherwise get new ID
+                        existing_result = self.conn.execute("""
+                            SELECT id FROM knx_doc_columns
+                            WHERE table_id = ? AND field_name = ?
+                        """, [table_id, field_name]).fetchone()
 
-                        new_columns_count += 1
-                        self.logger.debug(f"Added new column: {field_name} (calculated: {is_calculated})")
-                    else:
-                        self.logger.debug(f"Column '{field_name}' already exists, skipping")
+                        if existing_result:
+                            column_id = existing_result[0]
+                            action = "Updated"
+                        else:
+                            # Get the next available column ID for new columns
+                            result = self.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM knx_doc_columns").fetchone()
+                            column_id = result[0]
+                            action = "Added"
+                            new_columns_count += 1
+
+                        # Always do a full merge - replace all fields with new data
+                        try:
+                            self.conn.execute("""
+                                INSERT INTO knx_doc_columns (
+                                    id, table_id, field_name, description, data_type, is_key,
+                                    is_calculated, referenced_table_id, display_on_export, created_at
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                                ON CONFLICT (id) DO UPDATE SET
+                                    table_id = EXCLUDED.table_id,
+                                    field_name = EXCLUDED.field_name,
+                                    description = EXCLUDED.description,
+                                    data_type = EXCLUDED.data_type,
+                                    is_key = EXCLUDED.is_key,
+                                    is_calculated = EXCLUDED.is_calculated,
+                                    referenced_table_id = EXCLUDED.referenced_table_id,
+                                    display_on_export = EXCLUDED.display_on_export
+                            """, [column_id, table_id, field_name, description, data_type, is_key,
+                                 is_calculated, referenced_table_id, display_on_export])
+
+                        except Exception as sql_error:
+                            self.logger.error(f"Failed to upsert column '{field_name}' in table {table_id}: {sql_error}")
+                            raise
+
+                        self.logger.debug(f"{action} column: {field_name}")
 
             if new_columns_count > 0:
                 self.logger.info(f"Added {new_columns_count} new columns to table {table_id}")
@@ -169,41 +169,13 @@ class TableDatabase:
             self.logger.error(f"Failed to merge columns data: {e}")
             raise
 
-    def _insert_columns_data(self, table_id: int, columns_data: List[List[Any]]):
-        """Insert columns data for a table"""
-        for column_data in columns_data:
-            # Ensure we have at least the required fields
-            if len(column_data) >= 5:
-                # Get the next available column ID
-                result = self.conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM knx_doc_columns").fetchone()
-                column_id = result[0]
-
-                field_name = column_data[0] if len(column_data) > 0 else ""
-                description = column_data[1] if len(column_data) > 1 else ""
-                data_type = column_data[2] if len(column_data) > 2 else ""
-                is_key = column_data[3] if len(column_data) > 3 else ""
-                is_calculated = column_data[4] if len(column_data) > 4 else False
-                referenced_table_id = column_data[5] if len(column_data) > 5 else None
-                display_on_export = column_data[6] if len(column_data) > 6 else False
-
-                self.conn.execute("""
-                    INSERT INTO knx_doc_columns (
-                        id, table_id, field_name, description, data_type, is_key,
-                        is_calculated, referenced_table_id, display_on_export
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, [
-                    column_id, table_id, field_name, description, data_type, is_key,
-                    is_calculated, referenced_table_id, display_on_export
-                ])
-
-                self.logger.debug(f"Inserted column: {field_name} (calculated: {is_calculated})")
 
     def get_table_by_name(self, table_name: str) -> Optional[Dict]:
-        """Get table data by name"""
+        """Get table data by name (case-insensitive)"""
         try:
             result = self.conn.execute("""
                 SELECT id, name, description, calculated_fields_description, created_at
-                FROM knx_doc_tables WHERE name = ?
+                FROM knx_doc_tables WHERE LOWER(name) = LOWER(?)
             """, [table_name]).fetchone()
 
             if result:
@@ -221,10 +193,10 @@ class TableDatabase:
             return None
 
     def get_table_id_by_name(self, table_name: str) -> Optional[int]:
-        """Get table ID by name"""
+        """Get table ID by name (case-insensitive)"""
         try:
             result = self.conn.execute("""
-                SELECT id FROM knx_doc_tables WHERE name = ?
+                SELECT id FROM knx_doc_tables WHERE LOWER(name) = LOWER(?)
             """, [table_name]).fetchone()
 
             return result[0] if result else None

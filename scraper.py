@@ -11,6 +11,23 @@ from database import TableDatabase
 
 
 class EdgeSessionScraper:
+
+    def _extract_table_name_from_text(self, text):
+        """Extract table name by finding the earliest delimiter position"""
+        # Find the earliest delimiter position
+        delimiters = [' ', '(', ')', '.', '\n', ';', ',', 'table', 'Table']
+        earliest_pos = len(text)  # Default to end of string
+
+        for delimiter in delimiters:
+            pos = text.find(delimiter)
+            if pos != -1 and pos < earliest_pos:
+                earliest_pos = pos
+
+        # Extract text up to the earliest delimiter
+        if earliest_pos < len(text):
+            text = text[:earliest_pos]
+
+        return text.strip()
     def __init__(self, logger_config=None, db_path="mappings.duckdb"):
         self.browser = None
         self.context = None
@@ -328,19 +345,16 @@ class EdgeSessionScraper:
 
                         # Extract referenced table for reference columns
                         referenced_table_id = None
-                        if (data_type.lower().startswith('reference') and not is_calculated):
-                            # Look for "Referenced table: " in the description
-                            if "Referenced table: " in description:
-                                # Extract text after "Referenced table: "
-                                ref_start = description.find("Referenced table: ") + len("Referenced table: ")
+                        if (data_type and data_type.lower().startswith('reference') and not is_calculated):
+                            # Look for "Referenced table: " in the description (case-insensitive)
+                            ref_table_text = "Referenced table: "
+                            ref_start_pos = description.lower().find(ref_table_text.lower())
+                            if ref_start_pos != -1:
+                                # Extract text after "Referenced table: " using the actual case from description
+                                ref_start = ref_start_pos + len(ref_table_text)
                                 # Find the end of the table name (until next sentence, period, or newline)
                                 ref_text = description[ref_start:]
-                                # Split by common delimiters and take the first part
-                                for delimiter in ['.', '\n', ';', ',']:
-                                    if delimiter in ref_text:
-                                        ref_text = ref_text.split(delimiter)[0]
-                                        break
-                                referenced_table_name = ref_text.strip()
+                                referenced_table_name = self._extract_table_name_from_text(ref_text)
 
                                 # Look up the table ID by name
                                 referenced_table_id = self.db.get_table_id_by_name(referenced_table_name)
@@ -416,24 +430,43 @@ def main():
     logger.info("Attempting to load session data")
     pages_to_scrape = [
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/allocation_table_.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/aggregatepartcustomer_ta.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/alternatepart_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/alternaterouting_table_.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/billofmaterial(mfg)_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/bomalternate_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/constraint_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/constraintavailable_tabl.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/customer_table_.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/customerdestination_tabl.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/crpoperation_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/demandorder_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/engineeringchange_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/forecastdetail_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/forecastdetail_table.htm",        
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandactual_t.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandheader_t.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandorder_ta.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalreceiptheader_t.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalreceipt_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyactual_t.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyheader_t.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyorder_ta.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/independentdemand_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/model_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/onhand_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/part_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partsource_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partcustomer.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partsolution_table.htm",        
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partsupplier.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/pool_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/routing_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/scheduledreceipt_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/site_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/source_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/sourceconstraint_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/substitutegroup_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/supplier_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/supplyorder_table.htm",
         ]
     if scraper.load_session_data():
