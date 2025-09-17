@@ -57,6 +57,26 @@ class TableDatabase:
             )
         """)
 
+        # Create knx_doc_expanded table with same columns as Excel export
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS knx_doc_expanded (
+                id INTEGER PRIMARY KEY,
+                table_id INTEGER,
+                table_name VARCHAR,
+                field_name VARCHAR,
+                description TEXT,
+                data_type VARCHAR,
+                is_key VARCHAR,
+                is_calculated BOOLEAN,
+                referenced_table VARCHAR,
+                display_on_export BOOLEAN,
+                created_at TIMESTAMP,
+                referenced_table_id INTEGER,
+                FOREIGN KEY (table_id) REFERENCES knx_doc_tables(id),
+                FOREIGN KEY (referenced_table_id) REFERENCES knx_doc_tables(id)
+            )
+        """)
+
         self.conn.commit()
         self.logger.debug("Database tables created successfully")
 
