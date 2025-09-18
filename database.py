@@ -60,7 +60,7 @@ class TableDatabase:
         # Create knx_doc_expanded table with same columns as Excel export
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS knx_doc_expanded (
-                id INTEGER PRIMARY KEY,
+                id DECIMAL(10,6) PRIMARY KEY,
                 table_id INTEGER,
                 table_name VARCHAR,
                 field_name VARCHAR,

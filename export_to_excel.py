@@ -6,97 +6,8 @@ import duckdb
 import pandas as pd
 import logging
 from pathlib import Path
-from datetime import datetime
 from logger_config import LoggerConfig
 
-
-def _expand_reference_recursively(con, field_info, current_path, visited_tables, max_depth, root_field_props, logger):
-    """
-    Recursively expand reference fields to build complete dotted paths
-
-    Args:
-        con: Database connection
-        field_info: Dict with field information including referenced_table_id, data_type
-        current_path: Current dotted path (e.g., "Table.Ref1.Ref2")
-        visited_tables: Set of table IDs already visited (cycle detection)
-        max_depth: Maximum recursion depth remaining
-        root_field_props: Properties from the original reference field (is_key, display_on_export)
-        logger: Logger instance
-
-    Returns:
-        List of expanded field dictionaries
-    """
-    # Base cases
-    if max_depth <= 0:
-        logger.debug(f"Max depth reached for path: {current_path}")
-        return []
-
-    if field_info.get('referenced_table_id') in visited_tables:
-        logger.debug(f"Cycle detected for path: {current_path}, skipping")
-        return []
-
-    # If this is not a reference field, return it as a terminal field
-    if (not field_info.get('data_type') or
-        not str(field_info['data_type']).lower().startswith('reference') or
-        field_info.get('is_calculated') or
-        not field_info.get('referenced_table_id')):
-
-        # Create terminal expanded field
-        # Extract the origin table name from the current path (the last table before the final field)
-        path_parts = current_path.split('.')
-        origin_table = path_parts[-2] if len(path_parts) >= 2 else 'Unknown'
-
-        expanded_field = {
-            'id': f"expanded_{current_path}",
-            'table_id': root_field_props['table_id'],
-            'table_name': root_field_props['table_name'],
-            'field_name': f"    {current_path}",  # Add four spaces indentation
-            'description': f"[From {origin_table}] {field_info.get('description', '')}",
-            'data_type': field_info.get('data_type', ''),
-            'is_key': root_field_props['is_key'],
-            'is_calculated': field_info.get('is_calculated', False),
-            'referenced_table': field_info.get('ref_referenced_table'),
-            'display_on_export': root_field_props['display_on_export'],
-            'created_at': root_field_props['created_at']
-        }
-        return [expanded_field]
-
-    # This is a reference field, so expand it further
-    expanded_fields = []
-    new_visited = visited_tables.copy()
-    new_visited.add(field_info['referenced_table_id'])
-
-    logger.debug(f"Expanding reference field at path: {current_path}, referenced_table_id: {field_info['referenced_table_id']}")
-
-    # Get display_on_export fields from the referenced table
-    ref_fields_df = con.execute("""
-        SELECT
-            c.field_name,
-            c.description,
-            c.data_type,
-            c.is_key,
-            c.is_calculated,
-            c.referenced_table_id,
-            rt2.name as ref_referenced_table
-        FROM knx_doc_columns c
-        LEFT JOIN knx_doc_tables rt2 ON c.referenced_table_id = rt2.id
-        WHERE c.table_id = ? AND c.display_on_export = TRUE
-        ORDER BY c.id
-    """, [field_info['referenced_table_id']]).fetchdf()
-
-    logger.debug(f"Found {len(ref_fields_df)} display_on_export fields for referenced table ID {field_info['referenced_table_id']}")
-
-    # Recursively expand each display field
-    for _, ref_field in ref_fields_df.iterrows():
-        new_path = f"{current_path}.{ref_field['field_name']}"
-
-        # Recursively expand this field
-        sub_expanded = _expand_reference_recursively(
-            con, ref_field.to_dict(), new_path, new_visited, max_depth - 1, root_field_props, logger
-        )
-        expanded_fields.extend(sub_expanded)
-
-    return expanded_fields
 
 
 def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx", overwrite=False):
@@ -152,85 +63,31 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
 
         logger.info(f"Found {len(tables_df)} tables")
 
-        # Query base columns data
-        logger.info("Querying columns data...")
-        base_columns_df = con.execute("""
+        # Query data directly from knx_doc_expanded table
+        logger.info("Querying columns data from knx_doc_expanded table...")
+        columns_df = con.execute("""
             SELECT
-                c.id,
-                c.table_id,
-                t.name as table_name,
-                c.field_name,
-                c.description,
-                c.data_type,
-                c.is_key,
-                c.is_calculated,
-                rt.name as referenced_table,
-                c.display_on_export,
-                c.created_at,
-                c.referenced_table_id
-            FROM knx_doc_columns c
-            LEFT JOIN knx_doc_tables t ON c.table_id = t.id
-            LEFT JOIN knx_doc_tables rt ON c.referenced_table_id = rt.id
-            ORDER BY c.table_id, c.id
+                id, table_id, table_name, field_name, description, data_type,
+                is_key, is_calculated, referenced_table, display_on_export,
+                created_at, referenced_table_id
+            FROM knx_doc_expanded
+            ORDER BY id
         """).fetchdf()
 
-        # Expand reference fields with display_on_export fields from referenced tables
-        logger.info("Expanding reference fields with display_on_export fields...")
-        expanded_rows = []
+        # Apply indentation based on decimal ID values
+        logger.info("Applying indentation based on decimal ID values...")
+        for idx, row in columns_df.iterrows():
+            if pd.notna(row['id']) and isinstance(row['id'], (float, int)):
+                # Remove any existing indentation first
+                field_name = str(row['field_name']).lstrip()
 
-        for _, row in base_columns_df.iterrows():
-            # Add the original row
-            expanded_rows.append(row.to_dict())
-
-            # If this is a reference field and has a referenced table, add recursively expanded fields
-            if (row['data_type'] and str(row['data_type']).lower().startswith('reference') and
-                row['referenced_table_id'] is not None and not row['is_calculated']):
-
-                logger.debug(f"[{row['table_name']}] Processing reference field '{row['field_name']}' (data_type: {row['data_type']}, referenced_table_id: {row['referenced_table_id']}, referenced_table: {row['referenced_table']})")
-
-                # Set up root field properties to inherit through recursion
-                root_field_props = {
-                    'table_id': row['table_id'],
-                    'table_name': row['table_name'],
-                    'is_key': row['is_key'],
-                    'display_on_export': row['display_on_export'],
-                    'created_at': row['created_at']
-                }
-
-                # Use recursive expansion with max depth of 5 levels
-                initial_path = f"{row['table_name']}.{row['referenced_table']}"
-                recursive_expanded = _expand_reference_recursively(
-                    con, row.to_dict(), initial_path, set(), 5, root_field_props, logger
-                )
-
-                # Add all recursively expanded fields
-                expanded_rows.extend(recursive_expanded)
-
-                if recursive_expanded:
-                    logger.info(f"[{row['table_name']}] Recursively expanded reference field '{row['field_name']}' into {len(recursive_expanded)} fields")
-                    for expanded in recursive_expanded:
-                        logger.debug(f"[{row['table_name']}] Added recursive field: {expanded['field_name']}")
+                # Check if ID has decimal part (is expanded field)
+                if row['id'] % 1 != 0:  # Has decimal part
+                    # Add indentation (4 spaces) to field_name
+                    columns_df.at[idx, 'field_name'] = f"    {field_name}"
                 else:
-                    logger.warning(f"[{row['table_name']}] No recursive expansion results for reference field '{row['field_name']}' -> '{row['referenced_table']}' (ID: {row['referenced_table_id']})")
-
-        # Convert back to DataFrame
-        columns_df = pd.DataFrame(expanded_rows)
-
-        # Reorder columns according to specified order: table_name, is_key, field_name, is_calculated
-        if not columns_df.empty:
-            # Define the desired column order
-            desired_order = ['table_name', 'is_key', 'field_name', 'is_calculated']
-
-            # Get remaining columns that aren't in the desired order
-            remaining_cols = [col for col in columns_df.columns if col not in desired_order]
-
-            # Create final column order
-            final_order = desired_order + remaining_cols
-
-            # Reorder the DataFrame
-            columns_df = columns_df[final_order]
-
-            logger.info(f"Reordered columns in specified order: {desired_order}")
+                    # No indentation for non-decimal IDs
+                    columns_df.at[idx, 'field_name'] = field_name
 
         logger.info(f"Found {len(columns_df)} columns")
 

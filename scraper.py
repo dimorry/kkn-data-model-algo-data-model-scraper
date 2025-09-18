@@ -1,6 +1,7 @@
 import json
 import logging
 import random
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,41 @@ class EdgeSessionScraper:
             text = text[:earliest_pos]
 
         return text.strip()
+
+    def _clean_name(self, name: str) -> str:
+        """Clean table and field names by removing whitespace while preserving leading spaces for expanded fields"""
+        if not name:
+            return ""
+
+        original_name = name
+
+        # Check if this is an expanded field name (starts with spaces)
+        leading_spaces = ""
+        if name.startswith("    "):  # 4 leading spaces for expanded fields
+            leading_spaces = "    "
+            # Remove the leading spaces for cleaning, we'll add them back
+            name_to_clean = name[4:]
+        else:
+            name_to_clean = name
+
+        # Remove all types of whitespace characters from the name content
+        # This includes spaces, tabs, line breaks, and other Unicode whitespace
+        cleaned = re.sub(r'\s+', '', name_to_clean)
+
+        # Remove any remaining non-alphanumeric characters except underscores, hyphens, dots, and parentheses
+        # Keep dots for field paths like "Allocation.Part.Name"
+        # Keep parentheses for cases like "Supplier(Mfg)"
+        cleaned = re.sub(r'[^\w\-\.\(\)]', '', cleaned)
+
+        # Restore leading spaces for expanded fields
+        final_cleaned = leading_spaces + cleaned
+
+        # Log the cleaning operation if there was a change
+        if final_cleaned != original_name.strip():
+            self.logger.debug(f"Cleaned name: '{original_name}' → '{final_cleaned}'")
+
+        return final_cleaned
+
     def __init__(self, logger_config=None, db_path="mappings.duckdb"):
         self.browser = None
         self.context = None
@@ -79,7 +115,8 @@ class EdgeSessionScraper:
             table_name = self._extract_table_name()
             if not table_name:
                 self.logger.warning("No table name found, using URL as fallback")
-                table_name = f"table_from_{url.split('/')[-1].replace('.htm', '')}"
+                fallback_name = f"table_from_{url.split('/')[-1].replace('.htm', '')}"
+                table_name = self._clean_name(fallback_name)
 
             self.logger.info(f"Extracted table name: {table_name}")
 
@@ -166,8 +203,10 @@ class EdgeSessionScraper:
                     self.logger.debug(f"Found h1 ending with 'table': {original_text}")
                     # Remove 'table' suffix and trim
                     table_name = original_text[:-5].strip()  # Remove last 5 characters ('table')
-                    self.logger.debug(f"Processed table name: {table_name}")
-                    return table_name
+                    # Clean the table name of whitespace and special characters
+                    clean_table_name = self._clean_name(table_name)
+                    self.logger.debug(f"Processed table name: {table_name} → {clean_table_name}")
+                    return clean_table_name
 
             self.logger.debug("No h1 element ending with 'table' found")
             return None
@@ -338,7 +377,7 @@ class EdgeSessionScraper:
                     cells = row.query_selector_all('td, th')
 
                     if len(cells) >= 4:  # Ensure we have at least 4 columns
-                        field_name = cells[0].inner_text().strip()
+                        field_name = self._clean_name(cells[0].inner_text().strip())
                         description = cells[1].inner_text().strip()
                         data_type = cells[2].inner_text().strip()
                         key = cells[3].inner_text().strip()
@@ -354,7 +393,8 @@ class EdgeSessionScraper:
                                 ref_start = ref_start_pos + len(ref_table_text)
                                 # Find the end of the table name (until next sentence, period, or newline)
                                 ref_text = description[ref_start:]
-                                referenced_table_name = self._extract_table_name_from_text(ref_text)
+                                raw_referenced_table_name = self._extract_table_name_from_text(ref_text)
+                                referenced_table_name = self._clean_name(raw_referenced_table_name)
 
                                 # Look up the table ID by name
                                 referenced_table_id = self.db.get_table_id_by_name(referenced_table_name)

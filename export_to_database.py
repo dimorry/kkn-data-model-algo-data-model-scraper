@@ -6,7 +6,6 @@ import duckdb
 import pandas as pd
 import logging
 from pathlib import Path
-from datetime import datetime
 from logger_config import LoggerConfig
 
 
@@ -127,8 +126,8 @@ def export_to_database(db_path="mappings.duckdb"):
         con.execute("DELETE FROM knx_doc_expanded")
         logger.info("Cleared existing data from knx_doc_expanded table")
 
-        # Query base columns data (same as Excel export)
-        logger.info("Querying columns data...")
+        # Step 1: Query base columns with proper ordering
+        logger.info("Step 1: Querying base columns with proper ordering...")
         base_columns_df = con.execute("""
             SELECT
                 c.id,
@@ -146,22 +145,27 @@ def export_to_database(db_path="mappings.duckdb"):
             FROM knx_doc_columns c
             LEFT JOIN knx_doc_tables t ON c.table_id = t.id
             LEFT JOIN knx_doc_tables rt ON c.referenced_table_id = rt.id
-            ORDER BY c.table_id, c.id
+            ORDER BY t.name,
+                     CASE WHEN c.is_key = 'True' THEN 0 ELSE 1 END,
+                     c.field_name
         """).fetchdf()
 
-        # Expand reference fields with display_on_export fields from referenced tables
-        logger.info("Expanding reference fields with display_on_export fields...")
-        expanded_rows = []
+        logger.info(f"Found {len(base_columns_df)} base columns")
+
+        # Step 2: Process each column and inject expanded references immediately after
+        logger.info("Step 2: Processing columns and expanding references...")
+        final_rows = []
+        expanded_sequence = {}  # Track sequence numbers for each original ID
 
         for _, row in base_columns_df.iterrows():
-            # Add the original row
-            expanded_rows.append(row.to_dict())
+            # Add the original row first
+            final_rows.append(row.to_dict())
 
-            # If this is a reference field and has a referenced table, add recursively expanded fields
+            # If this is a reference field, expand it and inject the results immediately after
             if (row['data_type'] and str(row['data_type']).lower().startswith('reference') and
                 row['referenced_table_id'] is not None and not row['is_calculated']):
 
-                logger.debug(f"[{row['table_name']}] Processing reference field '{row['field_name']}' (data_type: {row['data_type']}, referenced_table_id: {row['referenced_table_id']}, referenced_table: {row['referenced_table']})")
+                logger.debug(f"[{row['table_name']}] Processing reference field '{row['field_name']}' -> '{row['referenced_table']}'")
 
                 # Set up root field properties to inherit through recursion
                 root_field_props = {
@@ -178,20 +182,32 @@ def export_to_database(db_path="mappings.duckdb"):
                     con, row.to_dict(), initial_path, set(), 5, root_field_props, logger
                 )
 
-                # Add all recursively expanded fields
-                expanded_rows.extend(recursive_expanded)
+                # Inject expanded fields immediately after the parent field
+                for expanded_field in recursive_expanded:
+                    # Generate decimal ID for expanded field
+                    original_id = row['id']
+                    if original_id not in expanded_sequence:
+                        expanded_sequence[original_id] = 1
+                    else:
+                        expanded_sequence[original_id] += 1
+
+                    sequence = expanded_sequence[original_id]
+                    decimal_id = float(f"{original_id}.{sequence:06d}")
+
+                    # Update the expanded field with decimal ID
+                    expanded_field['id'] = decimal_id
+                    final_rows.append(expanded_field)
 
                 if recursive_expanded:
-                    logger.info(f"[{row['table_name']}] Recursively expanded reference field '{row['field_name']}' into {len(recursive_expanded)} fields")
-                    for expanded in recursive_expanded:
-                        logger.debug(f"[{row['table_name']}] Added recursive field: {expanded['field_name']}")
+                    logger.info(f"[{row['table_name']}] Expanded reference field '{row['field_name']}' into {len(recursive_expanded)} fields")
                 else:
-                    logger.warning(f"[{row['table_name']}] No recursive expansion results for reference field '{row['field_name']}' -> '{row['referenced_table']}' (ID: {row['referenced_table_id']})")
+                    logger.warning(f"[{row['table_name']}] No expansion results for reference field '{row['field_name']}' -> '{row['referenced_table']}'")
 
-        # Convert back to DataFrame
-        columns_df = pd.DataFrame(expanded_rows)
+        # Convert to DataFrame
+        columns_df = pd.DataFrame(final_rows)
+        logger.info(f"Total rows after expansion: {len(columns_df)}")
 
-        # Reorder columns according to specified order: table_name, is_key, field_name, is_calculated
+        # Step 3: Final ordering and column arrangement
         if not columns_df.empty:
             # Define the desired column order
             desired_order = ['table_name', 'is_key', 'field_name', 'is_calculated']
@@ -205,28 +221,23 @@ def export_to_database(db_path="mappings.duckdb"):
             # Reorder the DataFrame
             columns_df = columns_df[final_order]
 
-            logger.info(f"Reordered columns in specified order: {desired_order}")
+            logger.info(f"Applied column ordering: {desired_order}")
 
-        logger.info(f"Found {len(columns_df)} columns to insert")
+        logger.info(f"Ready to insert {len(columns_df)} total columns")
 
-        # Insert data into knx_doc_expanded table in the exact same order
-        logger.info("Inserting data into knx_doc_expanded table...")
+        # Step 4: Insert data into knx_doc_expanded table
+        logger.info("Step 4: Inserting data into knx_doc_expanded table...")
         insert_count = 0
 
-        for idx, row in columns_df.iterrows():
+        for _, row in columns_df.iterrows():
             # Handle None values and ensure proper types
             def safe_value(val):
                 if pd.isna(val):
                     return None
                 return val
 
-            # Handle ID specially - for expanded fields, generate a unique integer ID
-            id_value = row['id']
-            if isinstance(id_value, str) and id_value.startswith('expanded_'):
-                # Use the row index as unique ID for expanded fields
-                id_value = insert_count + 1000000  # Start from 1M to avoid conflicts
-            else:
-                id_value = safe_value(id_value)
+            # ID is already properly formatted (decimal IDs generated during expansion)
+            id_value = safe_value(row['id'])
 
             # Insert row into knx_doc_expanded table
             con.execute("""
