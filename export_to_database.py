@@ -80,7 +80,10 @@ def _expand_reference_recursively(con, field_info, current_path, visited_tables,
         FROM knx_doc_columns c
         LEFT JOIN knx_doc_tables rt2 ON c.referenced_table_id = rt2.id
         WHERE c.table_id = ? AND (c.display_on_export = TRUE OR c.is_key = 'True')
-        ORDER BY c.id
+        ORDER BY
+                CASE WHEN c.is_calculated THEN 1 ELSE 0 END,
+                CASE WHEN LOWER(c.is_key) = 'yes' THEN 0 ELSE 1 END,
+                c.field_name;
     """, [field_info['referenced_table_id']]).fetchdf()
 
     logger.debug(f"Found {len(ref_fields_df)} display_on_export and key fields for referenced table ID {field_info['referenced_table_id']}")
@@ -123,7 +126,7 @@ def export_to_database(db_path="mappings.duckdb"):
 
         # Clear existing data from knx_doc_expanded table
         logger.info("Clearing existing data from knx_doc_expanded table...")
-        con.execute("DELETE FROM knx_doc_expanded")
+        con.execute("truncate table knx_doc_expanded;")
         logger.info("Cleared existing data from knx_doc_expanded table")
 
         # Step 1: Query base columns with proper ordering
@@ -146,8 +149,9 @@ def export_to_database(db_path="mappings.duckdb"):
             LEFT JOIN knx_doc_tables t ON c.table_id = t.id
             LEFT JOIN knx_doc_tables rt ON c.referenced_table_id = rt.id
             ORDER BY t.name,
-                     CASE WHEN c.is_key = 'True' THEN 0 ELSE 1 END,
-                     c.field_name
+					CASE WHEN c.is_calculated THEN 1 ELSE 0 END,
+                    CASE WHEN LOWER(c.is_key) = 'yes' THEN 0 ELSE 1 END,
+                    c.field_name;
         """).fetchdf()
 
         logger.info(f"Found {len(base_columns_df)} base columns")
@@ -208,28 +212,12 @@ def export_to_database(db_path="mappings.duckdb"):
         # Convert to DataFrame
         columns_df = pd.DataFrame(final_rows)
         logger.info(f"Total rows after expansion: {len(columns_df)}")
-
-        # Step 3: Final ordering and column arrangement
-        if not columns_df.empty:
-            # Define the desired column order
-            desired_order = ['table_name', 'is_key', 'field_name', 'is_calculated']
-
-            # Get remaining columns that aren't in the desired order
-            remaining_cols = [col for col in columns_df.columns if col not in desired_order]
-
-            # Create final column order
-            final_order = desired_order + remaining_cols
-
-            # Reorder the DataFrame
-            columns_df = columns_df[final_order]
-
-            logger.info(f"Applied column ordering: {desired_order}")
-
         logger.info(f"Ready to insert {len(columns_df)} total columns")
 
-        # Step 4: Insert data into knx_doc_expanded table
-        logger.info("Step 4: Inserting data into knx_doc_expanded table...")
+        # Step 3: Insert data into knx_doc_expanded table
+        logger.info("Step 3: Inserting data into knx_doc_expanded table...")
         insert_count = 0
+        display_order = 0
 
         for _, row in columns_df.iterrows():
             # Handle None values and ensure proper types
@@ -242,12 +230,13 @@ def export_to_database(db_path="mappings.duckdb"):
             id_value = safe_value(row['id'])
 
             # Insert row into knx_doc_expanded table
+            display_order += 1
             con.execute("""
                 INSERT INTO knx_doc_expanded (
                     id, table_id, table_name, field_name, description, data_type,
                     is_key, is_calculated, referenced_table, display_on_export,
-                    created_at, referenced_table_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, referenced_table_id, display_order
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
                 id_value,
                 safe_value(row['table_id']),
@@ -260,7 +249,8 @@ def export_to_database(db_path="mappings.duckdb"):
                 safe_value(row['referenced_table']),
                 safe_value(row['display_on_export']),
                 safe_value(row['created_at']),
-                safe_value(row['referenced_table_id'])
+                safe_value(row['referenced_table_id']),
+                display_order
             ])
 
             insert_count += 1

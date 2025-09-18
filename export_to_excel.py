@@ -58,7 +58,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                 calculated_fields_description,
                 created_at
             FROM knx_doc_tables
-            ORDER BY id
+            ORDER BY name
         """).fetchdf()
 
         logger.info(f"Found {len(tables_df)} tables")
@@ -71,7 +71,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                 is_key, is_calculated, referenced_table, display_on_export,
                 created_at, referenced_table_id
             FROM knx_doc_expanded
-            ORDER BY id
+            ORDER BY display_order
         """).fetchdf()
 
         # Apply indentation based on decimal ID values
@@ -173,7 +173,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
 
                 # Hide ID columns in the Columns sheet
                 if sheet_name == 'Columns':
-                    id_columns_to_hide = ['id', 'table_id', 'referenced_table_id']
+                    id_columns_to_hide = ['id', 'table_id', 'referenced_table_id', 'display_on_export']
 
                     # Find and hide the ID columns
                     for col_idx, column in enumerate(worksheet.iter_cols(1, worksheet.max_column), 1):
