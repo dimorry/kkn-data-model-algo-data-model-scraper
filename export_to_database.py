@@ -67,7 +67,7 @@ def _expand_reference_recursively(con, field_info, current_path, visited_tables,
 
     logger.debug(f"Expanding reference field at path: {current_path}, referenced_table_id: {field_info['referenced_table_id']}")
 
-    # Get display_on_export fields from the referenced table
+    # Get display_on_export fields and key fields from the referenced table
     ref_fields_df = con.execute("""
         SELECT
             c.field_name,
@@ -79,13 +79,13 @@ def _expand_reference_recursively(con, field_info, current_path, visited_tables,
             rt2.name as ref_referenced_table
         FROM knx_doc_columns c
         LEFT JOIN knx_doc_tables rt2 ON c.referenced_table_id = rt2.id
-        WHERE c.table_id = ? AND c.display_on_export = TRUE
+        WHERE c.table_id = ? AND (c.display_on_export = TRUE OR c.is_key = 'True')
         ORDER BY c.id
     """, [field_info['referenced_table_id']]).fetchdf()
 
-    logger.debug(f"Found {len(ref_fields_df)} display_on_export fields for referenced table ID {field_info['referenced_table_id']}")
+    logger.debug(f"Found {len(ref_fields_df)} display_on_export and key fields for referenced table ID {field_info['referenced_table_id']}")
 
-    # Recursively expand each display field
+    # Recursively expand each display and key field
     for _, ref_field in ref_fields_df.iterrows():
         new_path = f"{current_path}.{ref_field['field_name']}"
 
