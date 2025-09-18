@@ -177,7 +177,9 @@ def export_to_database(db_path="mappings.duckdb"):
                 }
 
                 # Use recursive expansion with max depth of 5 levels
-                initial_path = f"{row['table_name']}.{row['referenced_table']}"
+                # Use field name if referenced_table is None
+                referenced_name = row['referenced_table'] if row['referenced_table'] is not None else row['field_name']
+                initial_path = f"{row['table_name']}.{referenced_name}"
                 recursive_expanded = _expand_reference_recursively(
                     con, row.to_dict(), initial_path, set(), 5, root_field_props, logger
                 )
