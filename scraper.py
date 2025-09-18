@@ -385,14 +385,14 @@ class EdgeSessionScraper:
                         # Extract referenced table for reference columns
                         referenced_table_id = None
                         if (data_type and data_type.lower().startswith('reference') and not is_calculated):
-                            # Look for "Referenced table: " in the description (case-insensitive)
-                            ref_table_text = "Referenced table: "
+                            # Look for "Referenced table:" in the description (case-insensitive)
+                            ref_table_text = "Referenced table:"
                             ref_start_pos = description.lower().find(ref_table_text.lower())
                             if ref_start_pos != -1:
-                                # Extract text after "Referenced table: " using the actual case from description
+                                # Extract text after "Referenced table:" using the actual case from description
                                 ref_start = ref_start_pos + len(ref_table_text)
                                 # Find the end of the table name (until next sentence, period, or newline)
-                                ref_text = description[ref_start:]
+                                ref_text = description[ref_start:].strip()  # Strip any leading/trailing spaces
                                 raw_referenced_table_name = self._extract_table_name_from_text(ref_text)
                                 referenced_table_name = self._clean_name(raw_referenced_table_name)
 
