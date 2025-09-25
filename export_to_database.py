@@ -142,7 +142,7 @@ def export_to_database(db_path="mappings.duckdb"):
                 c.is_key,
                 c.is_calculated,
                 rt.name as referenced_table,
-                c.display_on_export,
+                (t.display_on_export AND c.display_on_export) as display_on_export,
                 c.created_at,
                 c.referenced_table_id
             FROM knx_doc_columns c

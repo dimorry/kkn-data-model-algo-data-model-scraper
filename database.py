@@ -35,8 +35,14 @@ class TableDatabase:
                 name VARCHAR,
                 description TEXT,
                 calculated_fields_description TEXT,
+                display_on_export BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        """)
+
+        self.conn.execute("""
+            ALTER TABLE knx_doc_tables
+            ADD COLUMN IF NOT EXISTS display_on_export BOOLEAN DEFAULT TRUE
         """)
 
         # Create knx_doc_columns table
@@ -194,7 +200,7 @@ class TableDatabase:
         """Get table data by name (case-insensitive)"""
         try:
             result = self.conn.execute("""
-                SELECT id, name, description, calculated_fields_description, created_at
+                SELECT id, name, description, calculated_fields_description, display_on_export, created_at
                 FROM knx_doc_tables WHERE LOWER(name) = LOWER(?)
             """, [table_name]).fetchone()
 
@@ -204,7 +210,8 @@ class TableDatabase:
                     'name': result[1],
                     'description': result[2],
                     'calculated_fields_description': result[3],
-                    'created_at': result[4]
+                    'display_on_export': result[4],
+                    'created_at': result[5]
                 }
             return None
 
@@ -256,7 +263,7 @@ class TableDatabase:
         """List all tables in the database"""
         try:
             results = self.conn.execute("""
-                SELECT id, name, description, calculated_fields_description, created_at
+                SELECT id, name, description, calculated_fields_description, display_on_export, created_at
                 FROM knx_doc_tables ORDER BY created_at DESC
             """).fetchall()
 
@@ -267,7 +274,8 @@ class TableDatabase:
                     'name': row[1],
                     'description': row[2],
                     'calculated_fields_description': row[3],
-                    'created_at': row[4]
+                    'display_on_export': row[4],
+                    'created_at': row[5]
                 })
 
             return tables
