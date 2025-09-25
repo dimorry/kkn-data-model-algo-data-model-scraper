@@ -83,6 +83,35 @@ class TableDatabase:
             )
         """)
 
+        # Create etn_cdm table to capture canonical data model metadata
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS etn_cdm (
+                canonical_entity_name VARCHAR,
+                maestro_table_name VARCHAR,
+                maestro_table_description VARCHAR,
+                erp_technical_table_name VARCHAR,
+                canonical_attribute_name VARCHAR,
+                maestro_field_name VARCHAR,
+                maestro_field_description VARCHAR,
+                maestro_data_type VARCHAR,
+                maestro_is_key BOOLEAN,
+                information_only BOOLEAN,
+                standard_maestro_field BOOLEAN,
+                add_to_etl BOOLEAN,
+                default_value VARCHAR,
+                example_value VARCHAR,
+                erp_tcode VARCHAR,
+                erp_screen_name VARCHAR,
+                erp_screen_field_name VARCHAR,
+                erp_technical_table_name_secondary VARCHAR,
+                erp_technical_field_name VARCHAR,
+                etl_logic VARCHAR,
+                etl_transformation_table VARCHAR,
+                notes VARCHAR,
+                field_output_order VARCHAR
+            )
+        """)
+
         self.conn.commit()
         self.logger.debug("Database tables created successfully")
 
