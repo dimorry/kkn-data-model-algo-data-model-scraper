@@ -108,7 +108,7 @@ class TableDatabase:
                 etl_logic VARCHAR,
                 etl_transformation_table VARCHAR,
                 notes VARCHAR,
-                field_output_order VARCHAR
+                field_output_order INTEGER
             )
         """)
 

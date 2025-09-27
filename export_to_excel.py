@@ -91,6 +91,20 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
 
         logger.info(f"Found {len(columns_df)} columns")
 
+        # Query ETN doc mappings data
+        logger.info("Querying ETN doc mappings data...")
+        mappings_df = con.execute("""
+            SELECT
+                knx_table, original_tab, source_table, source_field,
+                special_extract_logic, transformation_table_name, constant_value,
+                target_table, target_field, example_value, notes, key,
+                show_output, sort_output
+            FROM etn_doc_mappings
+            ORDER BY id
+        """).fetchdf()
+
+        logger.info(f"Found {len(mappings_df)} ETN doc mappings")
+
         # Create Excel writer with multiple sheets
         logger.info(f"Writing to Excel file: {output_file}")
         with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
@@ -99,8 +113,12 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
             logger.info("Written tables data to 'Tables' tab")
 
             # Write columns to second tab
-            columns_df.to_excel(writer, sheet_name='Columns', index=False)
-            logger.info("Written columns data to 'Columns' tab")
+            columns_df.to_excel(writer, sheet_name='knx_doc_extended', index=False)
+            logger.info("Written columns data to 'knx_doc_extended' tab")
+
+            # Write ETN doc mappings to third tab
+            mappings_df.to_excel(writer, sheet_name='ETN_Mappings', index=False)
+            logger.info("Written ETN doc mappings data to 'ETN_Mappings' tab")
 
             # Format worksheets with text wrapping and column sizing
             from openpyxl.styles import Alignment
@@ -171,8 +189,8 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                     worksheet.auto_filter.ref = f"A1:{max_col_letter}{worksheet.max_row}"
                     logger.debug(f"Added auto-filter to {sheet_name} tab: A1:{max_col_letter}{worksheet.max_row}")
 
-                # Hide ID columns in the Columns sheet
-                if sheet_name == 'Columns':
+                # Hide ID columns in the knx_doc_extended sheet
+                if sheet_name == 'knx_doc_extended':
                     id_columns_to_hide = ['id', 'table_id', 'referenced_table_id', 'display_on_export']
 
                     # Find and hide the ID columns
@@ -182,6 +200,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                             col_letter = get_column_letter(col_idx)
                             worksheet.column_dimensions[col_letter].hidden = True
                             logger.debug(f"Hidden column '{column_header}' ({col_letter}) in {sheet_name} tab")
+
 
                 # Freeze the header row (first row) for both worksheets
                 worksheet.freeze_panes = 'A2'  # Freeze everything above row 2 (i.e., row 1)
@@ -194,6 +213,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         logger.info(f"Output file: {output_file}")
         logger.info(f"Tables exported: {len(tables_df)}")
         logger.info(f"Columns exported: {len(columns_df)}")
+        logger.info(f"ETN mappings exported: {len(mappings_df)}")
 
         return True
 

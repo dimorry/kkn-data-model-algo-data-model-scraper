@@ -35,7 +35,7 @@ class ExcelDataExtractor:
             "Customer", "Part", "HistDmdActual_Ship", "HistoricalReceipt",
             "HistoricalSupplyActual", "Supplier", "PartSource_MatMstr", "Source",
             "BillOfMaterial", "Constraint", "ConstraintAvailable", "SourceConstraint",
-            "Operations", "IndDmd_Open", "OnHand", "SchdRcpt_PO", "Allocation_WO",
+            "IndDmd_Open", "OnHand", "SchdRcpt_PO", "Allocation_WO",
             "AggregatePartCustomer", "SP_PartCustomer"
         ]
 
@@ -46,7 +46,8 @@ class ExcelDataExtractor:
             "IndDmd_Open": "IndependentDemand",
             "SchdRcpt_PO": "ScheduledReceipt",
             "Allocation_WO": "Allocation",
-            "SP_PartCustomer": "PartCustomer"
+            "SP_PartCustomer": "PartCustomer",
+            "Operations": "SourceConstraint", 
         }
 
         # Wave implementation column variations to exclude
