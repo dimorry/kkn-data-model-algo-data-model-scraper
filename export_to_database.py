@@ -45,11 +45,28 @@ def _expand_reference_recursively(con, field_info, current_path, visited_tables,
         path_parts = current_path.split('.')
         origin_table = path_parts[-2] if len(path_parts) >= 2 else 'Unknown'
 
+        # Remove the root table name from the display path
+        if len(path_parts) > 1:
+            display_segments = path_parts[1:]
+        else:
+            display_segments = path_parts[:]
+
+        root_field_name = root_field_props.get('field_name')
+        root_referenced_table = root_field_props.get('referenced_table')
+
+        # Prefix the field name when it differs from the referenced table name
+        if (root_field_name and root_referenced_table and
+                root_field_name != root_referenced_table and
+                (not display_segments or display_segments[0] != root_field_name)):
+            display_segments.insert(0, root_field_name)
+
+        display_path = '.'.join(display_segments)
+
         expanded_field = {
             'id': f"expanded_{current_path}",
             'table_id': root_field_props['table_id'],
             'table_name': root_field_props['table_name'],
-            'field_name': f"    {current_path}",  # Add four spaces indentation
+            'field_name': f"    {display_path}",  # Add four spaces indentation
             'description': f"[From {origin_table}] {field_info.get('description', '')}",
             'data_type': field_info.get('data_type', ''),
             'is_key': root_field_props['is_key'],
@@ -171,18 +188,25 @@ def export_to_database(db_path="mappings.duckdb"):
 
                 logger.debug(f"[{row['table_name']}] Processing reference field '{row['field_name']}' -> '{row['referenced_table']}'")
 
+                # Normalize referenced table name for downstream processing
+                referenced_table_name = row['referenced_table']
+                if pd.isna(referenced_table_name):
+                    referenced_table_name = None
+
                 # Set up root field properties to inherit through recursion
                 root_field_props = {
                     'table_id': row['table_id'],
                     'table_name': row['table_name'],
                     'is_key': row['is_key'],
                     'display_on_export': row['display_on_export'],
-                    'created_at': row['created_at']
+                    'created_at': row['created_at'],
+                    'field_name': row['field_name'],
+                    'referenced_table': referenced_table_name
                 }
 
                 # Use recursive expansion with max depth of 5 levels
                 # Use field name if referenced_table is None
-                referenced_name = row['referenced_table'] if row['referenced_table'] is not None else row['field_name']
+                referenced_name = referenced_table_name if referenced_table_name is not None else row['field_name']
                 initial_path = f"{row['table_name']}.{referenced_name}"
                 recursive_expanded = _expand_reference_recursively(
                     con, row.to_dict(), initial_path, set(), 5, root_field_props, logger
