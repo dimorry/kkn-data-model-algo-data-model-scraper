@@ -105,6 +105,64 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
 
         logger.info(f"Found {len(mappings_df)} ETN doc mappings")
 
+        # Query ETN CDM data
+        logger.info("Querying ETN CDM data...")
+        etn_cdm_df = con.execute("""
+            SELECT
+                canonical_entity_name,
+                canonical_attribute_name,
+                maestro_field_name,
+                source_table,
+                source_field,
+                maestro_field_description,
+                maestro_data_type,
+                maestro_is_key,
+                information_only,
+                standard_maestro_field,
+                add_to_etl,
+                default_value,
+                example_value,
+                erp_tcode,
+                erp_screen_name,
+                erp_screen_field_name,
+                erp_technical_table_name,
+                erp_technical_field_name,
+                etl_logic,
+                etl_transformation_table,
+                notes,
+                field_output_order
+            FROM etn_cdm
+        """).fetchdf()
+
+        logger.info(f"Found {len(etn_cdm_df)} ETN CDM records")
+
+        etn_cdm_columns = {
+            'canonical_entity_name': 'Canonical Entity Name',
+            'canonical_attribute_name': 'Canonical Attribute Name',
+            'maestro_field_name': 'Maestro Field Name',
+            'source_table': 'Source Table',
+            'source_field': 'Source Field',
+            'maestro_field_description': 'Maestro Field Description',
+            'maestro_data_type': 'Maestro Data Type',
+            'maestro_is_key': 'Maestro Is Key',
+            'information_only': 'Information Only',
+            'standard_maestro_field': 'Standard Maestro Field',
+            'add_to_etl': 'Add to ETL',
+            'default_value': 'Default Value',
+            'example_value': 'Example Value',
+            'erp_tcode': 'ERP TCode',
+            'erp_screen_name': 'ERP Screen Name',
+            'erp_screen_field_name': 'ERP Screen Field Name',
+            'erp_technical_table_name': 'ERP Technical Table Name',
+            'erp_technical_field_name': 'ERP Technical Field Name',
+            'etl_logic': 'ETL Logic',
+            'etl_transformation_table': 'ETL Transformation Table',
+            'notes': 'Notes',
+            'field_output_order': 'Field Output Order',
+        }
+
+        etn_cdm_df = etn_cdm_df.rename(columns=etn_cdm_columns)
+
         # Create Excel writer with multiple sheets
         logger.info(f"Writing to Excel file: {output_file}")
         with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
@@ -119,6 +177,15 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
             # Write ETN doc mappings to third tab
             mappings_df.to_excel(writer, sheet_name='ETN_Mappings', index=False)
             logger.info("Written ETN doc mappings data to 'ETN_Mappings' tab")
+
+            # Write ETN CDM data to fourth tab
+            if not etn_cdm_df.empty:
+                etn_cdm_df.to_excel(writer, sheet_name='ETN_CDM', index=False)
+                logger.info("Written ETN CDM data to 'ETN_CDM' tab")
+            else:
+                empty_df = pd.DataFrame(columns=list(etn_cdm_columns.values()))
+                empty_df.to_excel(writer, sheet_name='ETN_CDM', index=False)
+                logger.info("Created empty 'ETN_CDM' tab (no data available)")
 
             # Format worksheets with text wrapping and column sizing
             from openpyxl.styles import Alignment
