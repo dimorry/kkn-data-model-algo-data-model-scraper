@@ -7,6 +7,7 @@ import pandas as pd
 import logging
 from pathlib import Path
 from logger_config import LoggerConfig
+from etn_cdm_upserter import EtnCdmUpserter
 
 
 def _expand_reference_recursively(con, field_info, current_path, visited_tables, max_depth, root_field_props, logger):
@@ -285,6 +286,12 @@ def export_to_database(db_path="mappings.duckdb"):
         # Commit all insertions
         con.commit()
         logger.info(f"Successfully inserted {insert_count} rows into knx_doc_expanded table")
+
+        # Run ETN CDM upsert leveraging the freshly exported data
+        upserter_logger = logger.getChild("EtnCdmUpserter")
+        etn_cdm_upserter = EtnCdmUpserter(db_path=db_path, logger=upserter_logger)
+        etn_cdm_upserter.run(con)
+        logger.info("ETN CDM upsert completed")
 
         con.close()
 

@@ -108,8 +108,26 @@ class TableDatabase:
                 etl_logic VARCHAR,
                 etl_transformation_table VARCHAR,
                 notes VARCHAR,
-                field_output_order INTEGER
+                field_output_order INTEGER,
+                match_status VARCHAR,
+                match_tier INTEGER,
+                match_details TEXT,
+                sap_augmentation_strategy VARCHAR
             )
+        """)
+
+        # Ensure provenance columns exist when upgrading existing databases
+        self.conn.execute("""
+            ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS match_status VARCHAR
+        """)
+        self.conn.execute("""
+            ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS match_tier INTEGER
+        """)
+        self.conn.execute("""
+            ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS match_details TEXT
+        """)
+        self.conn.execute("""
+            ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS sap_augmentation_strategy VARCHAR
         """)
 
         self.conn.commit()

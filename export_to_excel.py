@@ -110,10 +110,12 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         etn_cdm_df = con.execute("""
             SELECT
                 canonical_entity_name,
+                maestro_table_name,
+                maestro_table_description,
                 canonical_attribute_name,
                 maestro_field_name,
-                source_table,
-                source_field,
+                erp_technical_table_name,
+                erp_technical_field_name,
                 maestro_field_description,
                 maestro_data_type,
                 maestro_is_key,
@@ -130,7 +132,11 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                 etl_logic,
                 etl_transformation_table,
                 notes,
-                field_output_order
+                field_output_order,
+                match_status,
+                match_tier,
+                match_details,
+                sap_augmentation_strategy
             FROM etn_cdm
         """).fetchdf()
 
@@ -138,10 +144,12 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
 
         etn_cdm_columns = {
             'canonical_entity_name': 'Canonical Entity Name',
+            'maestro_table_name': 'Maestro Table Name',
+            'maestro_table_description': 'Maestro Table Description',
             'canonical_attribute_name': 'Canonical Attribute Name',
             'maestro_field_name': 'Maestro Field Name',
-            'source_table': 'Source Table',
-            'source_field': 'Source Field',
+            'erp_technical_field_name': 'ERP Technical Field Name',
+            'erp_technical_field_name': 'ERP Technical Table Name',
             'maestro_field_description': 'Maestro Field Description',
             'maestro_data_type': 'Maestro Data Type',
             'maestro_is_key': 'Maestro Is Key',
@@ -159,6 +167,10 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
             'etl_transformation_table': 'ETL Transformation Table',
             'notes': 'Notes',
             'field_output_order': 'Field Output Order',
+            'match_status': 'Match Status',
+            'match_tier': 'Match Tier',
+            'match_details': 'Match Details',
+            'sap_augmentation_strategy': 'SAP Augmentation Strategy',
         }
 
         etn_cdm_df = etn_cdm_df.rename(columns=etn_cdm_columns)
