@@ -20,8 +20,6 @@ class EtnCdmUpserter:
         't438m': ('MD04', 'Display Stock/Requirements List'),
     }
 
-    GENERIC_SAP_TCODE = ('SE16N', 'Table Display')
-
     def __init__(self, db_path: str = "mappings.duckdb", logger: Optional[logging.Logger] = None):
         self.db_path = db_path
         self.logger = logger or logging.getLogger(__name__)
@@ -693,27 +691,39 @@ class EtnCdmUpserter:
         maestro_field_name: Optional[str],
         maestro_field_description: Optional[str]
     ) -> Dict[str, Optional[str]]:
-        strategy = 'default_generic'
-        erp_tcode, erp_screen_name = self.GENERIC_SAP_TCODE
-        erp_screen_field_name = source_field
+        erp_tcode: Optional[str] = None
+        erp_screen_name: Optional[str] = None
+        erp_screen_field_name: Optional[str] = None
 
-        if source_table:
-            primary_table = re.split(r'[\s/|,]+', source_table.strip().lower())[0]
-            if primary_table in self.SAP_TABLE_HINTS:
-                erp_tcode, erp_screen_name = self.SAP_TABLE_HINTS[primary_table]
-                strategy = 'source_table_lookup'
-            else:
-                strategy = 'source_table_generic'
-        elif maestro_table_name or maestro_field_name:
-            strategy = 'maestro_inference'
+        primary_table, table_source, has_hint = self._select_sap_table([
+            ('source_table', source_table),
+            ('source_field', source_field),
+            ('notes', notes),
+            ('maestro_field_description', maestro_field_description),
+        ])
 
-        if not erp_screen_field_name:
-            if maestro_field_name:
-                erp_screen_field_name = maestro_field_name
-            elif maestro_field_description:
-                erp_screen_field_name = maestro_field_description
-            else:
-                erp_screen_field_name = source_field or 'N/A'
+        strategy_parts: List[str] = []
+
+        if primary_table and has_hint:
+            hint = self.SAP_TABLE_HINTS[primary_table.lower()]
+            erp_tcode, erp_screen_name = hint
+            strategy_parts.append(f'{table_source}_table_hint')
+        elif primary_table:
+            strategy_parts.append(f'{table_source}_table_detected_no_hint')
+
+        field_token, field_source = self._select_sap_field(
+            primary_table,
+            source_field,
+            maestro_field_name,
+            maestro_field_description,
+            maestro_table_name,
+        )
+
+        if field_token:
+            erp_screen_field_name = field_token
+            strategy_parts.append(f'{field_source}_field_inferred')
+
+        strategy = '+'.join(strategy_parts) if strategy_parts else 'insufficient_source_metadata'
 
         return {
             'erp_tcode': erp_tcode,
@@ -721,3 +731,110 @@ class EtnCdmUpserter:
             'erp_screen_field_name': erp_screen_field_name,
             'strategy': strategy,
         }
+
+    def _select_sap_table(
+        self,
+        sources: List[Tuple[str, Optional[str]]]
+    ) -> Tuple[Optional[str], Optional[str], bool]:
+        tokenized = [
+            (label, self._tokenize_identifier_parts(value))
+            for label, value in sources
+        ]
+
+        for label, tokens in tokenized:
+            for token_upper, original in tokens:
+                if not self._is_valid_identifier(token_upper):
+                    continue
+                if not (original.isupper() or original.islower()):
+                    continue
+                if token_upper.lower() in self.SAP_TABLE_HINTS:
+                    return token_upper, label, True
+
+        for label, tokens in tokenized:
+            for token_upper, original in tokens:
+                if not self._is_valid_identifier(token_upper):
+                    continue
+                if not (original.isupper() or original.islower()):
+                    continue
+                return token_upper, label, False
+
+        return None, None, False
+
+    def _select_sap_field(
+        self,
+        primary_table: Optional[str],
+        source_field: Optional[str],
+        maestro_field_name: Optional[str],
+        maestro_field_description: Optional[str],
+        maestro_table_name: Optional[str],
+    ) -> Tuple[Optional[str], str]:
+        tokens = self._tokenize_identifier_parts(source_field)
+        if not tokens:
+            return None, ''
+
+        primary_table_upper = primary_table.upper() if primary_table else None
+        maestro_tokens = self._collect_maestro_tokens(
+            maestro_field_name,
+            maestro_field_description,
+            maestro_table_name,
+        )
+
+        best_token: Optional[str] = None
+        best_score: Optional[int] = None
+
+        for idx, (token_upper, original) in enumerate(tokens):
+            if not self._is_valid_identifier(token_upper):
+                continue
+            if primary_table_upper and token_upper == primary_table_upper:
+                continue
+            if not (original.isupper() or original.islower()):
+                continue
+
+            score = 0
+            if original.isupper():
+                score += 5
+            elif original.islower():
+                score += 3
+            elif original[0].isalpha() and original[0].isupper() and original[1:].islower():
+                score -= 2
+
+            if re.search(r'\d', original):
+                score += 1
+
+            score += max(0, 3 - idx)
+
+            if maestro_tokens and token_upper in maestro_tokens:
+                score += 1
+
+            if best_token is None or score > best_score:
+                best_token = token_upper
+                best_score = score
+
+        return (best_token, 'source_field') if best_token else (None, '')
+
+    def _collect_maestro_tokens(self, *values: Optional[str]) -> set:
+        tokens: set = set()
+        for value in values:
+            for token_upper, original in self._tokenize_identifier_parts(value):
+                if self._is_valid_identifier(token_upper):
+                    tokens.add(token_upper)
+        return tokens
+
+    @staticmethod
+    def _tokenize_identifier_parts(value: Optional[str]) -> List[Tuple[str, str]]:
+        if not value:
+            return []
+        parts = re.split(r'[^A-Za-z0-9]+', value)
+        tokens: List[Tuple[str, str]] = []
+        for part in parts:
+            cleaned = part.strip()
+            if not cleaned:
+                continue
+            tokens.append((cleaned.upper(), cleaned))
+        return tokens
+
+    @staticmethod
+    def _is_valid_identifier(token: str) -> bool:
+        if not token or len(token) < 3:
+            return False
+        return bool(re.fullmatch(r'[A-Z0-9]+', token))
