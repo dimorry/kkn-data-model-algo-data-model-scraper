@@ -64,6 +64,16 @@ class EdgeSessionScraper:
 
         return final_cleaned
 
+    def _strip_trailing_parenthetical(self, text: str) -> str:
+        """Remove a descriptive parenthetical suffix like '(Mfg)' from table names"""
+        if not text:
+            return ""
+
+        stripped = re.sub(r'\s*\([^\)]*\)\s*$', '', text).strip()
+
+        # If stripping results in an empty string, fall back to the original trimmed text
+        return stripped if stripped else text.strip()
+
     def __init__(self, logger_config=None, db_path="mappings.duckdb"):
         self.browser = None
         self.context = None
@@ -203,9 +213,13 @@ class EdgeSessionScraper:
                     self.logger.debug(f"Found h1 ending with 'table': {original_text}")
                     # Remove 'table' suffix and trim
                     table_name = original_text[:-5].strip()  # Remove last 5 characters ('table')
+                    # Drop any trailing descriptor in parentheses so 'Supplier (Mfg)' becomes 'Supplier'
+                    table_name_no_parenthetical = self._strip_trailing_parenthetical(table_name)
                     # Clean the table name of whitespace and special characters
-                    clean_table_name = self._clean_name(table_name)
-                    self.logger.debug(f"Processed table name: {table_name} → {clean_table_name}")
+                    clean_table_name = self._clean_name(table_name_no_parenthetical)
+                    self.logger.debug(
+                        f"Processed table name: {table_name} → {table_name_no_parenthetical} → {clean_table_name}"
+                    )
                     return clean_table_name
 
             self.logger.debug("No h1 element ending with 'table' found")
@@ -469,52 +483,52 @@ def main():
     # Method 2: Use saved session data
     logger.info("Attempting to load session data")
     pages_to_scrape = [
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/allocation_table_.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/aggregatepartcustomer_ta.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/alternatepart_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/alternaterouting_table_.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/billofmaterial(mfg)_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/bonusschedule_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/bomalternate_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/control/calendar_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/control/calendardate_table.htm",        
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/constraint_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/constraintavailable_tabl.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/customer_table_.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/customerdestination_tabl.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/crpoperation_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/demandorder_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/engineeringchange_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/forecastdetail_table.htm",        
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandactual_t.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandheader_t.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandorder_ta.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalreceiptheader_t.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalreceipt_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyactual_t.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyheader_t.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyorder_ta.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/independentdemand_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/model_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/onhand_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/part_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partsource_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partcustomer.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partsolution_table.htm",        
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partsupplier.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/penaltyschedule_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/pool_table.htm",        
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/project_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/control/projecttype_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/referencepart_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/routing_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/scheduledreceipt_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/site_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/source_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/sourceconstraint_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/substitutegroup_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/allocation_table_.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/aggregatepartcustomer_ta.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/alternatepart_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/alternaterouting_table_.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/billofmaterial(mfg)_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/bonusschedule_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/bomalternate_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/control/calendar_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/control/calendardate_table.htm",        
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/constraint_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/constraintavailable_tabl.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/customer_table_.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/customerdestination_tabl.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/crpoperation_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/demandorder_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/engineeringchange_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/forecastdetail_table.htm",        
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandactual_t.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandheader_t.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandorder_ta.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalreceiptheader_t.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalreceipt_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyactual_t.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyheader_t.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyorder_ta.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/independentdemand_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/model_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/onhand_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/part_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partsource_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partcustomer.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partsolution_table.htm",        
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/partsupplier.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/penaltyschedule_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/pool_table.htm",        
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/project_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/control/projecttype_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/referencepart_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/routing_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/scheduledreceipt_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/site_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/source_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/sourceconstraint_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/substitutegroup_table.htm",
         "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/supplier_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/supplyorder_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/supplyorder_table.htm",
         ]
     if scraper.load_session_data():
         logger.info(f"Starting to scrape {len(pages_to_scrape)} pages")
