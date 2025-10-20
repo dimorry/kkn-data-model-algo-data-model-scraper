@@ -8,6 +8,26 @@ import logging
 from pathlib import Path
 from logger_config import LoggerConfig
 
+TARGET_TABLES = [
+    "BillOfMaterial",
+    "BOMAlternate",
+    "Calendar",
+    "CalendarDate",
+    "Customer",
+    "IndependentDemand",
+    "OnHand",
+    "Operation",    
+    "Part",
+    "PartCustomer",
+    "PartSource",
+    "ReferencePart",
+    "Site",
+    "ScheduledReceipt",
+    "Source",
+    "Supplier",
+    "Routing",    
+]
+
 
 
 def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx", overwrite=False):
@@ -48,9 +68,12 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         con = duckdb.connect(db_path)
         logger.info(f"Connected to database: {db_path}")
 
+        # Prepare target table filters for ETN CDM export
+        target_tables_upper = [name.upper() for name in TARGET_TABLES]
+
         # Query tables data
         logger.info("Querying tables data...")
-        tables_df = con.execute("""
+        tables_query = """
             SELECT
                 id,
                 name as table_name,
@@ -59,20 +82,23 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                 created_at
             FROM knx_doc_tables
             ORDER BY name
-        """).fetchdf()
+        """
+        logger.info("Exporting tables, columns, and mappings without target table filtering")
+        tables_df = con.execute(tables_query).fetchdf()
 
         logger.info(f"Found {len(tables_df)} tables")
 
         # Query data directly from knx_doc_expanded table
         logger.info("Querying columns data from knx_doc_expanded table...")
-        columns_df = con.execute("""
+        columns_query = """
             SELECT
                 id, table_id, table_name, field_name, description, data_type,
                 is_key, is_calculated, referenced_table, display_on_export,
                 created_at, referenced_table_id
             FROM knx_doc_expanded
             ORDER BY display_order
-        """).fetchdf()
+        """
+        columns_df = con.execute(columns_query).fetchdf()
 
         # Apply indentation based on decimal ID values
         logger.info("Applying indentation based on decimal ID values...")
@@ -93,7 +119,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
 
         # Query ETN doc mappings data
         logger.info("Querying ETN doc mappings data...")
-        mappings_df = con.execute("""
+        mappings_query = """
             SELECT
                 knx_table, original_tab, source_table, source_field,
                 special_extract_logic, transformation_table_name, constant_value,
@@ -101,13 +127,18 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                 show_output, sort_output
             FROM etn_doc_mappings
             ORDER BY id
-        """).fetchdf()
+        """
+        mappings_df = con.execute(mappings_query).fetchdf()
 
         logger.info(f"Found {len(mappings_df)} ETN doc mappings")
 
         # Query ETN CDM data
         logger.info("Querying ETN CDM data...")
-        etn_cdm_df = con.execute("""
+        etn_match_statuses = ["ETN_ONLY", "MATCHED"]
+        match_placeholders = ",".join(["?"] * len(etn_match_statuses))
+        logger.info("Filtering ETN CDM export to match statuses: %s", ", ".join(etn_match_statuses))
+
+        etn_cdm_query = f"""
             SELECT
                 canonical_entity_name,
                 maestro_table_name,
@@ -137,9 +168,23 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                 match_details,
                 sap_augmentation_strategy
             FROM etn_cdm
-        """).fetchdf()
+            WHERE upper(match_status) IN ({match_placeholders})
+        """
+        etn_cdm_df = con.execute(etn_cdm_query, [status.upper() for status in etn_match_statuses]).fetchdf()
 
-        logger.info(f"Found {len(etn_cdm_df)} ETN CDM records")
+        logger.info(f"Found {len(etn_cdm_df)} ETN CDM records before applying target table filter")
+
+        if TARGET_TABLES:
+            logger.info("Filtering ETN CDM export to target tables: %s", ", ".join(TARGET_TABLES))
+            original_count = len(etn_cdm_df)
+            etn_cdm_df = etn_cdm_df[
+                etn_cdm_df['canonical_entity_name'].fillna('').str.upper().isin(target_tables_upper)
+            ]
+            logger.info(
+                "Filtered ETN CDM records from %d to %d using target tables",
+                original_count,
+                len(etn_cdm_df)
+            )
 
         etn_cdm_columns = {
             'canonical_entity_name': 'Canonical Entity Name',
