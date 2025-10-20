@@ -135,10 +135,10 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         # Query ETN CDM data
         logger.info("Querying ETN CDM data...")
         etn_match_statuses = ["ETN_ONLY", "MATCHED"]
-        match_placeholders = ",".join(["?"] * len(etn_match_statuses))
-        logger.info("Filtering ETN CDM export to match statuses: %s", ", ".join(etn_match_statuses))
+        match_statuses_upper = [status.upper() for status in etn_match_statuses]
+        logger.info("Will filter ETN CDM export to match statuses: %s (Maestro keys retained regardless of status)", ", ".join(etn_match_statuses))
 
-        etn_cdm_query = f"""
+        etn_cdm_query = """
             SELECT
                 canonical_entity_name,
                 maestro_table_name,
@@ -168,22 +168,47 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                 match_details,
                 sap_augmentation_strategy
             FROM etn_cdm
-            WHERE upper(match_status) IN ({match_placeholders})
         """
-        etn_cdm_df = con.execute(etn_cdm_query, [status.upper() for status in etn_match_statuses]).fetchdf()
+        etn_cdm_df = con.execute(etn_cdm_query).fetchdf()
 
-        logger.info(f"Found {len(etn_cdm_df)} ETN CDM records before applying target table filter")
+        logger.info(f"Found {len(etn_cdm_df)} ETN CDM records before applying filters")
 
         if TARGET_TABLES:
-            logger.info("Filtering ETN CDM export to target tables: %s", ", ".join(TARGET_TABLES))
-            original_count = len(etn_cdm_df)
-            etn_cdm_df = etn_cdm_df[
-                etn_cdm_df['canonical_entity_name'].fillna('').str.upper().isin(target_tables_upper)
-            ]
             logger.info(
-                "Filtered ETN CDM records from %d to %d using target tables",
+                "Filtering ETN CDM export to target tables: %s and match statuses: %s (retaining Maestro keys regardless of status)",
+                ", ".join(TARGET_TABLES),
+                ", ".join(etn_match_statuses)
+            )
+            original_count = len(etn_cdm_df)
+            canonical_match = etn_cdm_df['canonical_entity_name'].fillna('').str.upper().isin(target_tables_upper)
+
+            status_match = (
+                etn_cdm_df['match_status']
+                .fillna('')
+                .astype(str)
+                .str.strip()
+                .str.upper()
+                .isin(match_statuses_upper)
+            )
+
+            maestro_key_flags = (
+                etn_cdm_df['maestro_is_key']
+                .fillna('')
+                .astype(str)
+                .str.strip()
+                .str.upper()
+                .isin({"TRUE", "YES", "Y", "1"})
+            )
+
+            filter_mask = canonical_match & (status_match | maestro_key_flags)
+            etn_cdm_df = etn_cdm_df[filter_mask]
+
+            key_only_retained = (canonical_match & maestro_key_flags & ~status_match).sum()
+            logger.info(
+                "Filtered ETN CDM records from %d to %d (retained %d Maestro key fields outside status filter)",
                 original_count,
-                len(etn_cdm_df)
+                len(etn_cdm_df),
+                key_only_retained
             )
 
         etn_cdm_columns = {
