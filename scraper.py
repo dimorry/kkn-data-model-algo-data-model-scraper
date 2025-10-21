@@ -497,7 +497,8 @@ def main():
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/customer_table_.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/customerdestination_tabl.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/crpoperation_table.htm",
-        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/demandorder_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/control/demandtype_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/demandorder_table.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/engineeringchange_table.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/forecastdetail_table.htm",        
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicaldemandactual_t.htm",
@@ -508,7 +509,7 @@ def main():
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyactual_t.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyheader_t.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/historicalsupplyorder_ta.htm",
-        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/independentdemand_table.htm",
+        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/independentdemand_table.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/model_table.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/onhand_table.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/part_table.htm",
@@ -527,7 +528,7 @@ def main():
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/source_table.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/sourceconstraint_table.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/substitutegroup_table.htm",
-        "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/supplier_table.htm",
+        # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/supplier_table.htm",
         # "https://help.kinaxis.com/20162/datamodel/content/rr_datamodel/input/supplyorder_table.htm",
         ]
     if scraper.load_session_data():
