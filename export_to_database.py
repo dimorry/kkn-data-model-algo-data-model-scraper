@@ -10,6 +10,19 @@ from logger_config import LoggerConfig
 from etn_cdm_upserter import EtnCdmUpserter
 
 
+def _clean_description(value):
+    if isinstance(value, str):
+        return value.strip()
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        pass
+    return str(value).strip()
+
+
 def _expand_reference_recursively(con, field_info, current_path, visited_tables, max_depth, root_field_props, logger):
     """
     Recursively expand reference fields to build complete dotted paths
@@ -62,13 +75,18 @@ def _expand_reference_recursively(con, field_info, current_path, visited_tables,
             display_segments.insert(0, root_field_name)
 
         display_path = '.'.join(display_segments)
+        root_description = _clean_description(root_field_props.get('root_description'))
+        origin_description = _clean_description(field_info.get('description'))
+        origin_context = f"[From {origin_table}]"
+        if origin_description:
+            origin_context = f"{origin_context} {origin_description}"
 
         expanded_field = {
             'id': f"expanded_{current_path}",
             'table_id': root_field_props['table_id'],
             'table_name': root_field_props['table_name'],
             'field_name': f"    {display_path}",  # Add four spaces indentation
-            'description': f"[From {origin_table}] {field_info.get('description', '')}",
+            'description': "\n\n".join(part for part in [root_description, origin_context] if part),
             'data_type': field_info.get('data_type', ''),
             'is_key': root_field_props['is_key'],
             'is_calculated': field_info.get('is_calculated', False),
@@ -202,7 +220,8 @@ def export_to_database(db_path="mappings.duckdb"):
                     'display_on_export': row['display_on_export'],
                     'created_at': row['created_at'],
                     'field_name': row['field_name'],
-                    'referenced_table': referenced_table_name
+                    'referenced_table': referenced_table_name,
+                    'root_description': row['description']
                 }
 
                 # Use recursive expansion with max depth of 5 levels
