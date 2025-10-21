@@ -87,6 +87,16 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         tables_df = con.execute(tables_query).fetchdf()
 
         logger.info(f"Found {len(tables_df)} tables")
+        table_desc_lookup = {}
+        if not tables_df.empty:
+            table_desc_lookup = {
+                str(name).strip().upper(): desc
+                for name, desc in zip(tables_df['table_name'], tables_df['description'])
+                if pd.notna(name)
+            }
+            logger.info("Prepared table description lookup for %d tables", len(table_desc_lookup))
+        else:
+            logger.warning("No table metadata available to build Maestro description lookup")
 
         # Query data directly from knx_doc_expanded table
         logger.info("Querying columns data from knx_doc_expanded table...")
@@ -191,6 +201,29 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         etn_cdm_df = con.execute(etn_cdm_query).fetchdf()
 
         logger.info(f"Found {len(etn_cdm_df)} ETN CDM records before applying filters")
+        if table_desc_lookup and 'maestro_table_name' in etn_cdm_df.columns:
+            maestro_table_normalized = (
+                etn_cdm_df['maestro_table_name']
+                .fillna('')
+                .astype(str)
+                .str.strip()
+                .str.upper()
+            )
+            existing_desc = (
+                etn_cdm_df['maestro_table_description']
+                .fillna('')
+                .astype(str)
+                .str.strip()
+            )
+            missing_desc_mask = existing_desc.eq('')
+            mapped_descriptions = maestro_table_normalized.map(table_desc_lookup)
+            fill_mask = missing_desc_mask & mapped_descriptions.notna()
+            if fill_mask.any():
+                etn_cdm_df.loc[fill_mask, 'maestro_table_description'] = mapped_descriptions[fill_mask]
+                logger.info(
+                    "Filled Maestro table descriptions for %d ETN CDM records using knx_doc_tables metadata",
+                    int(fill_mask.sum())
+                )
 
         # Guarantee Maestro key flags from knx_doc_extended mapping
         if key_field_lookup:
