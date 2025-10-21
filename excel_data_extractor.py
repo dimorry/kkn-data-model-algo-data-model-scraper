@@ -39,7 +39,7 @@ class ExcelDataExtractor:
             "AggregatePartCustomer", "SP_PartCustomer"
         ]
 
-        # Tab name mappings for kns_table column
+        # Tab name mappings for knx_table column
         self.tab_mappings = {
             "HistDmdActual_Ship": "HistoricalDemandActual",
             "PartSource_MatMstr": "PartSource",
@@ -90,7 +90,7 @@ class ExcelDataExtractor:
 
     def _get_mapped_table_name(self, tab_name: str) -> str:
         """
-        Get the mapped table name for kns_table column.
+        Get the mapped table name for knx_table column.
 
         Args:
             tab_name: Original tab name
@@ -199,9 +199,9 @@ class ExcelDataExtractor:
 
             filtered_df = filtered_df.rename(columns=normalized_columns)
 
-            # Add kns_table column with mapped table name
+            # Add knx_table column with mapped table name
             mapped_table_name = self._get_mapped_table_name(tab_name)
-            filtered_df['kns_table'] = mapped_table_name
+            filtered_df['knx_table'] = mapped_table_name
 
             # Add original_tab column to track source tab
             filtered_df['original_tab'] = tab_name
@@ -249,12 +249,12 @@ class ExcelDataExtractor:
             # Create table with VARCHAR for all columns (safest approach)
             column_defs = []
             for col in sorted(all_columns):
-                if col not in ['kns_table', 'original_tab']:
+                if col not in ['knx_table', 'original_tab']:
                     column_defs.append(f"{col} VARCHAR")
 
             # Add our standard columns
             column_defs.extend([
-                "kns_table VARCHAR",
+                "knx_table VARCHAR",
                 "original_tab VARCHAR",
                 "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
             ])
