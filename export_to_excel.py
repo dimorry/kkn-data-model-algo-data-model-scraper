@@ -99,6 +99,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
             ORDER BY display_order
         """
         columns_df = con.execute(columns_query).fetchdf()
+        raw_columns_df = columns_df.copy()
 
         # Apply indentation based on decimal ID values
         logger.info("Applying indentation based on decimal ID values...")
@@ -116,6 +117,24 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                     columns_df.at[idx, 'field_name'] = field_name
 
         logger.info(f"Found {len(columns_df)} columns")
+
+        # Build lookup for key fields from target tables
+        target_tables_upper_set = set(target_tables_upper)
+        key_flags = (
+            raw_columns_df['is_key']
+            .fillna('')
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .isin({'yes', 'true', 'y', '1'})
+        )
+        key_columns_df = raw_columns_df[
+            raw_columns_df['table_name'].fillna('').astype(str).str.upper().isin(target_tables_upper_set) & key_flags
+        ].copy()
+        key_columns_df['table_name_upper'] = key_columns_df['table_name'].astype(str).str.upper()
+        key_columns_df['field_name_upper'] = key_columns_df['field_name'].astype(str).str.strip().str.upper()
+        key_field_lookup = set(zip(key_columns_df['table_name_upper'], key_columns_df['field_name_upper']))
+        logger.info("Identified %d target table key fields from knx_doc_extended", len(key_field_lookup))
 
         # Query ETN doc mappings data
         logger.info("Querying ETN doc mappings data...")
@@ -172,6 +191,22 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         etn_cdm_df = con.execute(etn_cdm_query).fetchdf()
 
         logger.info(f"Found {len(etn_cdm_df)} ETN CDM records before applying filters")
+
+        # Guarantee Maestro key flags from knx_doc_extended mapping
+        if key_field_lookup:
+            canonical_upper = etn_cdm_df['canonical_entity_name'].fillna('').astype(str).str.upper()
+            maestro_field_upper = etn_cdm_df['maestro_field_name'].fillna('').astype(str).str.strip().str.upper()
+            key_mask = pd.Series(
+                [(entity, field) in key_field_lookup for entity, field in zip(canonical_upper, maestro_field_upper)],
+                index=etn_cdm_df.index
+            )
+            key_updates = int(key_mask.sum())
+            if key_updates:
+                etn_cdm_df.loc[key_mask, 'maestro_is_key'] = True
+                logger.info(
+                    "Applied Maestro key flag to %d ETN CDM records based on knx_doc_extended keys",
+                    key_updates
+                )
 
         if TARGET_TABLES:
             logger.info(
@@ -242,6 +277,29 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         }
 
         etn_cdm_df = etn_cdm_df.rename(columns=etn_cdm_columns)
+
+        if 'Maestro Is Key' in etn_cdm_df.columns:
+            maestro_key_series = (
+                etn_cdm_df['Maestro Is Key']
+                .fillna('')
+                .astype(str)
+                .str.strip()
+                .str.lower()
+            )
+            etn_cdm_df['Maestro Is Key'] = maestro_key_series.isin({'true', 'yes', 'y', '1', 't'})
+
+        sort_columns = ['Maestro Table Name', 'Maestro Is Key', 'Maestro Field Name']
+        missing_sort_cols = [col for col in sort_columns if col not in etn_cdm_df.columns]
+        if missing_sort_cols:
+            logger.warning("Unable to apply full ETN CDM sorting; missing columns: %s", ", ".join(missing_sort_cols))
+        else:
+            etn_cdm_df = etn_cdm_df.sort_values(
+                by=['Maestro Table Name', 'Maestro Is Key', 'Maestro Field Name'],
+                ascending=[True, False, True],
+                kind='mergesort'
+            )
+            etn_cdm_df.reset_index(drop=True, inplace=True)
+            logger.info("Ordered ETN CDM records by Maestro table name, key flag, then field name")
 
         # Create Excel writer with multiple sheets
         logger.info(f"Writing to Excel file: {output_file}")
