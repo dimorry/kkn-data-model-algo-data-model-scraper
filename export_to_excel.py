@@ -5,6 +5,7 @@ Export DuckDB tables content to Excel file with separate tabs
 import duckdb
 import pandas as pd
 import logging
+import math
 from pathlib import Path
 from logger_config import LoggerConfig
 
@@ -361,6 +362,22 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
             # Format worksheets with text wrapping and column sizing
             from openpyxl.styles import Alignment
 
+            def estimate_lines(cell_text, column_width):
+                if cell_text is None:
+                    return 1
+                text = str(cell_text)
+                if not text:
+                    return 1
+                approx_chars = max(int((column_width or 10) * 0.9), 10)
+                total_lines = 0
+                for raw_line in text.splitlines() or ['']:
+                    segment = raw_line
+                    if not segment.strip():
+                        total_lines += 1
+                        continue
+                    total_lines += max(1, math.ceil(len(segment) / approx_chars))
+                return max(total_lines, text.count('\n') + 1)
+
             for sheet_name in writer.sheets:
                 worksheet = writer.sheets[sheet_name]
 
@@ -371,8 +388,9 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                     column_header = column[0].value
 
                     # Check if this is a description column
-                    is_description_column = (column_header and
-                                           'description' in str(column_header).lower())
+                    header_lower = str(column_header).strip().lower() if column_header else ""
+                    is_description_column = ('description' in header_lower)
+                    is_field_name_column = (header_lower == 'field_name')
 
                     for cell in column:
                         # Apply text wrapping to all cells
@@ -385,7 +403,10 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                             pass
 
                     # Set column width based on content type
-                    if is_description_column:
+                    if sheet_name == 'knx_doc_extended' and is_field_name_column:
+                        adjusted_width = 60
+                        worksheet.column_dimensions[column_letter].width = adjusted_width
+                    elif is_description_column:
                         # Description columns get wider width and taller rows
                         adjusted_width = min(max_length + 2, 80)  # Wider for descriptions
                         worksheet.column_dimensions[column_letter].width = adjusted_width
@@ -395,6 +416,16 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                         worksheet.column_dimensions[column_letter].width = adjusted_width
 
                 # Auto-adjust row heights based on text content
+                try:
+                    header_row = next(worksheet.iter_rows(min_row=1, max_row=1))
+                except StopIteration:
+                    header_row = []
+                description_columns = {
+                    cell.column_letter
+                    for cell in header_row
+                    if cell.value and 'description' in str(cell.value).strip().lower()
+                }
+
                 for row in worksheet.iter_rows():
                     max_lines_in_row = 1
                     row_number = row[0].row
@@ -405,14 +436,11 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                             cell_text = str(cell.value)
                             column_width = worksheet.column_dimensions[cell.column_letter].width or 10
 
-                            # Estimate lines needed based on text length and column width
-                            # Roughly 1.2 characters per width unit in Excel
-                            chars_per_line = max(int(column_width * 1.2), 10)
-                            lines_needed = max(1, len(cell_text) // chars_per_line + (1 if len(cell_text) % chars_per_line else 0))
-
-                            # Also count explicit line breaks
-                            explicit_lines = cell_text.count('\n') + 1
-                            lines_needed = max(lines_needed, explicit_lines)
+                            # Estimate lines needed with preference for description columns
+                            if sheet_name == 'knx_doc_extended' and cell.column_letter in description_columns:
+                                lines_needed = estimate_lines(cell_text, column_width)
+                            else:
+                                lines_needed = estimate_lines(cell_text, column_width)
 
                             max_lines_in_row = max(max_lines_in_row, lines_needed)
 
