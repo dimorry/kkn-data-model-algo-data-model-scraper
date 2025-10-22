@@ -75,6 +75,7 @@ class TableDatabase:
                 is_key VARCHAR,
                 is_calculated BOOLEAN,
                 referenced_table VARCHAR,
+                is_expanded BOOLEAN DEFAULT FALSE,
                 display_on_export BOOLEAN,
                 created_at TIMESTAMP,
                 referenced_table_id INTEGER,

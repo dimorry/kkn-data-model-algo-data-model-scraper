@@ -91,6 +91,7 @@ def _expand_reference_recursively(con, field_info, current_path, visited_tables,
             'is_key': root_field_props['is_key'],
             'is_calculated': field_info.get('is_calculated', False),
             'referenced_table': field_info.get('ref_referenced_table'),
+            'is_expanded': True,
             'display_on_export': root_field_props['display_on_export'],
             'created_at': root_field_props['created_at']
         }
@@ -178,6 +179,7 @@ def export_to_database(db_path="mappings.duckdb"):
                 c.is_key,
                 c.is_calculated,
                 rt.name as referenced_table,
+                FALSE AS is_expanded,
                 (t.display_on_export AND c.display_on_export) as display_on_export,
                 c.created_at,
                 c.referenced_table_id
@@ -199,7 +201,9 @@ def export_to_database(db_path="mappings.duckdb"):
 
         for _, row in base_columns_df.iterrows():
             # Add the original row first
-            final_rows.append(row.to_dict())
+            base_row = row.to_dict()
+            base_row['is_expanded'] = bool(base_row.get('is_expanded', False))
+            final_rows.append(base_row)
 
             # If this is a reference field, expand it and inject the results immediately after
             if (row['data_type'] and str(row['data_type']).lower().startswith('reference') and
@@ -278,9 +282,9 @@ def export_to_database(db_path="mappings.duckdb"):
             con.execute("""
                 INSERT INTO knx_doc_expanded (
                     id, table_id, table_name, field_name, description, data_type,
-                    is_key, is_calculated, referenced_table, display_on_export,
+                    is_key, is_calculated, referenced_table, is_expanded, display_on_export,
                     created_at, referenced_table_id, display_order
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
                 id_value,
                 safe_value(row['table_id']),
@@ -291,6 +295,7 @@ def export_to_database(db_path="mappings.duckdb"):
                 safe_value(row['is_key']),
                 safe_value(row['is_calculated']),
                 safe_value(row['referenced_table']),
+                safe_value(row.get('is_expanded', False)),
                 safe_value(row['display_on_export']),
                 safe_value(row['created_at']),
                 safe_value(row['referenced_table_id']),

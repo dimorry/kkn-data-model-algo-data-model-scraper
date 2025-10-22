@@ -69,6 +69,7 @@ class EtnCdmUpserter:
                 is_key,
                 is_calculated,
                 referenced_table,
+                is_expanded,
                 display_on_export,
                 created_at
             FROM knx_doc_expanded

@@ -104,7 +104,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         columns_query = """
             SELECT
                 id, table_id, table_name, field_name, description, data_type,
-                is_key, is_calculated, referenced_table, display_on_export,
+                is_key, is_calculated, referenced_table, is_expanded, display_on_export,
                 created_at, referenced_table_id
             FROM knx_doc_expanded
             ORDER BY display_order
