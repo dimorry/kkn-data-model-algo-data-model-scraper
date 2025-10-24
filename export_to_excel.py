@@ -29,6 +29,27 @@ TARGET_TABLES = [
     "Routing",    
 ]
 
+FIELD_CATEGORY_METADATA = [
+    (
+        "Identifier",
+        "Id or part of the Id to uniquely identify a record (ex. Sales Order and Sales Order Line)",
+    ),
+    (
+        "Critical",
+        "These elements perform a core function (in a maestro context, missing/incorrect data in these fields leads to junk/no results) (ex. Purchase Order Confirmation Date)",
+    ),
+    (
+        "Functional Enabler",
+        "Element is not needed for core functionality, but if it is missing, some capability(s) will not function properly (ex. Part ABC/XYZ indicator)",
+    ),
+    (
+        "Optional/Reference",
+        "Reference data helps users understand context or makes filtering and grouping easier, but otherwise does not impact function (ex. Supplier name)",
+    ),
+]
+
+CRITICAL_NAME_SUBSTRINGS = ("Name", "Site", "Date", "LeadTime", "Number")
+
 
 
 def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx", overwrite=False):
@@ -335,6 +356,32 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
             etn_cdm_df.reset_index(drop=True, inplace=True)
             logger.info("Ordered ETN CDM records by Maestro table name, key flag, then field name")
 
+        def determine_field_category(row):
+            maestro_is_key = bool(row.get('Maestro Is Key', False))
+            if maestro_is_key:
+                return "Identifier"
+
+            match_status_raw = row.get('Match Status', '')
+            match_status = (match_status_raw or '').strip().upper()
+
+            if match_status == 'ETN_ONLY':
+                return "Optional/Reference"
+
+            maestro_field_name = row.get('Maestro Field Name') or ''
+            if any(substring in maestro_field_name for substring in CRITICAL_NAME_SUBSTRINGS) or 'LT' in maestro_field_name:
+                return "Critical"
+
+            if match_status == 'MATCHED':
+                return "Functional Enabler"
+
+            return None
+
+        if not etn_cdm_df.empty:
+            etn_cdm_df['Field Category'] = etn_cdm_df.apply(determine_field_category, axis=1)
+            logger.info("Assigned Field Category values to ETN CDM records")
+
+        field_category_df = pd.DataFrame(FIELD_CATEGORY_METADATA, columns=['Category Name', 'Description'])
+
         # Create Excel writer with multiple sheets
         logger.info(f"Writing to Excel file: {output_file}")
         with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
@@ -358,6 +405,9 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                 empty_df = pd.DataFrame(columns=list(etn_cdm_columns.values()))
                 empty_df.to_excel(writer, sheet_name='ETN_CDM', index=False)
                 logger.info("Created empty 'ETN_CDM' tab (no data available)")
+
+            field_category_df.to_excel(writer, sheet_name='Field Category', index=False)
+            logger.info("Written Field Category metadata to 'Field Category' tab")
 
             # Format worksheets with text wrapping and column sizing
             from openpyxl.styles import Alignment
