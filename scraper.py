@@ -31,15 +31,15 @@ class EdgeSessionScraper:
         return text.strip()
 
     def _clean_name(self, name: str) -> str:
-        """Clean table and field names by removing whitespace while preserving leading spaces for expanded fields"""
+        """Clean table and field names by removing whitespace while preserving leading spaces for extended fields"""
         if not name:
             return ""
 
         original_name = name
 
-        # Check if this is an expanded field name (starts with spaces)
+        # Check if this is an extended field name (starts with spaces)
         leading_spaces = ""
-        if name.startswith("    "):  # 4 leading spaces for expanded fields
+        if name.startswith("    "):  # 4 leading spaces for extended fields
             leading_spaces = "    "
             # Remove the leading spaces for cleaning, we'll add them back
             name_to_clean = name[4:]
@@ -55,7 +55,7 @@ class EdgeSessionScraper:
         # Keep parentheses for cases like "Supplier(Mfg)"
         cleaned = re.sub(r'[^\w\-\.\(\)]', '', cleaned)
 
-        # Restore leading spaces for expanded fields
+        # Restore leading spaces for extended fields
         final_cleaned = leading_spaces + cleaned
 
         # Log the cleaning operation if there was a change

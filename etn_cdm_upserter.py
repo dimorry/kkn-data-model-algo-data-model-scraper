@@ -57,7 +57,7 @@ class EtnCdmUpserter:
     def _load_source_data(self, con: duckdb.DuckDBPyConnection) -> Dict[str, pd.DataFrame]:
         self.logger.debug("Loading KNX and ETN source data")
 
-        knx_expanded = con.execute(
+        knx_extended = con.execute(
             """
             SELECT
                 id,
@@ -69,10 +69,10 @@ class EtnCdmUpserter:
                 is_key,
                 is_calculated,
                 referenced_table,
-                is_expanded,
+                is_extended,
                 display_on_export,
                 created_at
-            FROM knx_doc_expanded
+            FROM knx_doc_extended
         """
         ).fetchdf()
 
@@ -117,12 +117,12 @@ class EtnCdmUpserter:
         """
         ).fetchdf()
 
-        # Preprocess KNX expanded data
-        knx_expanded['field_name_trim'] = knx_expanded['field_name'].astype(str).str.strip()
-        knx_expanded['data_type_lower'] = knx_expanded['data_type'].astype(str).str.lower()
-        knx_expanded = knx_expanded[~knx_expanded['data_type_lower'].str.startswith('reference', na=False)].copy()
+        # Preprocess KNX extended data
+        knx_extended['field_name_trim'] = knx_extended['field_name'].astype(str).str.strip()
+        knx_extended['data_type_lower'] = knx_extended['data_type'].astype(str).str.lower()
+        knx_extended = knx_extended[~knx_extended['data_type_lower'].str.startswith('reference', na=False)].copy()
 
-        knx_expanded = knx_expanded.merge(
+        knx_extended = knx_extended.merge(
             tables_df[['id', 'table_description']],
             left_on='table_id',
             right_on='id',
@@ -138,7 +138,7 @@ class EtnCdmUpserter:
             'is_key': 'knx_column_is_key',
         })
 
-        knx_expanded = knx_expanded.merge(
+        knx_extended = knx_extended.merge(
             columns_df[['table_id', 'field_name_trim', 'knx_column_id', 'knx_column_field_name',
                         'knx_column_description', 'knx_column_data_type', 'knx_column_is_key']],
             left_on=['table_id', 'field_name_trim'],
@@ -149,7 +149,7 @@ class EtnCdmUpserter:
         etn_mappings['target_field_trim'] = etn_mappings['target_field'].astype(str).str.strip()
 
         return {
-            'knx_expanded': knx_expanded,
+            'knx_extended': knx_extended,
             'etn_mappings': etn_mappings,
         }
 
@@ -157,7 +157,7 @@ class EtnCdmUpserter:
     # Matching Logic
     # ------------------------------------------------------------------
     def _match_records(self, data: Dict[str, pd.DataFrame]) -> List[Dict[str, Any]]:
-        knx_df = data['knx_expanded']
+        knx_df = data['knx_extended']
         etn_df = data['etn_mappings']
 
         match_payloads: List[Dict[str, Any]] = []

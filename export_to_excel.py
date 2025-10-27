@@ -120,14 +120,14 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         else:
             logger.warning("No table metadata available to build Maestro description lookup")
 
-        # Query data directly from knx_doc_expanded table
-        logger.info("Querying columns data from knx_doc_expanded table...")
+        # Query data directly from knx_doc_extended table
+        logger.info("Querying columns data from knx_doc_extended table...")
         columns_query = """
             SELECT
                 id, table_id, table_name, field_name, description, data_type,
-                is_key, is_calculated, referenced_table, is_expanded, display_on_export,
+                is_key, is_calculated, referenced_table, is_extended, display_on_export,
                 created_at, referenced_table_id
-            FROM knx_doc_expanded
+            FROM knx_doc_extended
             ORDER BY display_order
         """
         columns_df = con.execute(columns_query).fetchdf()
@@ -140,7 +140,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                 # Remove any existing indentation first
                 field_name = str(row['field_name']).lstrip()
 
-                # Check if ID has decimal part (is expanded field)
+                # Check if ID has decimal part (is extended field)
                 if row['id'] % 1 != 0:  # Has decimal part
                     # Add indentation (4 spaces) to field_name
                     columns_df.at[idx, 'field_name'] = f"    {field_name}"

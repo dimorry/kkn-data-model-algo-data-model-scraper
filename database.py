@@ -63,9 +63,9 @@ class TableDatabase:
             )
         """)
 
-        # Create knx_doc_expanded table with same columns as Excel export
+        # Create knx_doc_extended table with same columns as Excel export
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS knx_doc_expanded (
+            CREATE TABLE IF NOT EXISTS knx_doc_extended (
                 id DECIMAL(10,6) PRIMARY KEY,
                 table_id INTEGER,
                 table_name VARCHAR,
@@ -75,7 +75,7 @@ class TableDatabase:
                 is_key VARCHAR,
                 is_calculated BOOLEAN,
                 referenced_table VARCHAR,
-                is_expanded BOOLEAN DEFAULT FALSE,
+                is_extended BOOLEAN DEFAULT FALSE,
                 display_on_export BOOLEAN,
                 created_at TIMESTAMP,
                 referenced_table_id INTEGER,

@@ -26,7 +26,7 @@ A specialized web scraper for extracting table documentation from Kinaxis help p
 - **📋 Two-Tab Format**: Tables and Columns in separate worksheets with frozen headers
 - **🎯 Smart Field Organization**:
   - Custom column order: table_name → is_key → field_name → is_calculated
-  - Indented expanded field names (4 spaces) for visual hierarchy
+  - Indented extended field names (4 spaces) for visual hierarchy
   - Origin table identification in descriptions: `[From TableName]`
 - **🔒 Clean Interface**:
   - ID columns (id, table_id, referenced_table_id) hidden but preserved
@@ -121,12 +121,12 @@ The Excel export includes sophisticated relationship mapping:
 ```python
 # Example of recursive expansion output:
 # Original field: Part (Reference)
-# Expanded fields:
+# Extended fields:
 #   Part.Name                    # Direct field from Part table
 #   Part.Site.Value             # Site reference from Part table
 #
 # Original field: ScheduledReceipt (Reference)
-# Expanded fields:
+# Extended fields:
 #   ScheduledReceipt.Line        # Direct field
 #   ScheduledReceipt.Order.Id    # SupplyOrder reference fields
 #   ScheduledReceipt.Order.Type
@@ -216,7 +216,7 @@ python test_database.py
 ### Export Settings
 - **Recursive Expansion**: Maximum depth of 5 levels (configurable)
 - **Column Organization**: table_name → is_key → field_name → is_calculated
-- **Visual Formatting**: 4-space indentation for expanded fields
+- **Visual Formatting**: 4-space indentation for extended fields
 - **Hidden Columns**: ID fields hidden but preserved for data integrity
 - **Text Handling**: Auto-wrapping with dynamic row heights
 - **Navigation**: Frozen headers and auto-filters for large datasets

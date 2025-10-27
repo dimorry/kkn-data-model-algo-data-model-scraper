@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Export DuckDB tables content to knx_doc_expanded table with same structure as Excel export
+Export DuckDB tables content to knx_doc_extended table with same structure as Excel export
 """
 import duckdb
 import pandas as pd
@@ -37,7 +37,7 @@ def _expand_reference_recursively(con, field_info, current_path, visited_tables,
         logger: Logger instance
 
     Returns:
-        List of expanded field dictionaries
+        List of extended field dictionaries
     """
     # Base cases
     if max_depth <= 0:
@@ -54,7 +54,7 @@ def _expand_reference_recursively(con, field_info, current_path, visited_tables,
         field_info.get('is_calculated') or
         not field_info.get('referenced_table_id')):
 
-        # Create terminal expanded field
+        # Create terminal extended field
         # Extract the origin table name from the current path (the last table before the final field)
         path_parts = current_path.split('.')
         origin_table = path_parts[-2] if len(path_parts) >= 2 else 'Unknown'
@@ -81,8 +81,8 @@ def _expand_reference_recursively(con, field_info, current_path, visited_tables,
         if origin_description:
             origin_context = f"{origin_context} {origin_description}"
 
-        expanded_field = {
-            'id': f"expanded_{current_path}",
+        extended_field = {
+            'id': f"extended_{current_path}",
             'table_id': root_field_props['table_id'],
             'table_name': root_field_props['table_name'],
             'field_name': f"    {display_path}",  # Add four spaces indentation
@@ -91,14 +91,14 @@ def _expand_reference_recursively(con, field_info, current_path, visited_tables,
             'is_key': root_field_props['is_key'],
             'is_calculated': field_info.get('is_calculated', False),
             'referenced_table': field_info.get('ref_referenced_table'),
-            'is_expanded': True,
+            'is_extended': True,
             'display_on_export': root_field_props['display_on_export'],
             'created_at': root_field_props['created_at']
         }
-        return [expanded_field]
+        return [extended_field]
 
     # This is a reference field, so expand it further
-    expanded_fields = []
+    extended_fields = []
     new_visited = visited_tables.copy()
     new_visited.add(field_info['referenced_table_id'])
 
@@ -130,16 +130,16 @@ def _expand_reference_recursively(con, field_info, current_path, visited_tables,
         new_path = f"{current_path}.{ref_field['field_name']}"
 
         # Recursively expand this field
-        sub_expanded = _expand_reference_recursively(
+        sub_extended = _expand_reference_recursively(
             con, ref_field.to_dict(), new_path, new_visited, max_depth - 1, root_field_props, logger
         )
-        expanded_fields.extend(sub_expanded)
+        extended_fields.extend(sub_extended)
 
-    return expanded_fields
+    return extended_fields
 
 
 def export_to_database(db_path="mappings.duckdb"):
-    """Export columns data to knx_doc_expanded table with same structure as Excel export"""
+    """Export columns data to knx_doc_extended table with same structure as Excel export"""
 
     # Setup logging
     logger_config = LoggerConfig(
@@ -161,10 +161,10 @@ def export_to_database(db_path="mappings.duckdb"):
         con = duckdb.connect(db_path)
         logger.info(f"Connected to database: {db_path}")
 
-        # Clear existing data from knx_doc_expanded table
-        logger.info("Clearing existing data from knx_doc_expanded table...")
-        con.execute("truncate table knx_doc_expanded;")
-        logger.info("Cleared existing data from knx_doc_expanded table")
+        # Clear existing data from knx_doc_extended table
+        logger.info("Clearing existing data from knx_doc_extended table...")
+        con.execute("truncate table knx_doc_extended;")
+        logger.info("Cleared existing data from knx_doc_extended table")
 
         # Step 1: Query base columns with proper ordering
         logger.info("Step 1: Querying base columns with proper ordering...")
@@ -179,7 +179,7 @@ def export_to_database(db_path="mappings.duckdb"):
                 c.is_key,
                 c.is_calculated,
                 rt.name as referenced_table,
-                FALSE AS is_expanded,
+                FALSE AS is_extended,
                 (t.display_on_export AND c.display_on_export) as display_on_export,
                 c.created_at,
                 c.referenced_table_id
@@ -194,15 +194,15 @@ def export_to_database(db_path="mappings.duckdb"):
 
         logger.info(f"Found {len(base_columns_df)} base columns")
 
-        # Step 2: Process each column and inject expanded references immediately after
+        # Step 2: Process each column and inject extended references immediately after
         logger.info("Step 2: Processing columns and expanding references...")
         final_rows = []
-        expanded_sequence = {}  # Track sequence numbers for each original ID
+        extended_sequence = {}  # Track sequence numbers for each original ID
 
         for _, row in base_columns_df.iterrows():
             # Add the original row first
             base_row = row.to_dict()
-            base_row['is_expanded'] = bool(base_row.get('is_expanded', False))
+            base_row['is_extended'] = bool(base_row.get('is_extended', False))
             final_rows.append(base_row)
 
             # If this is a reference field, expand it and inject the results immediately after
@@ -232,28 +232,28 @@ def export_to_database(db_path="mappings.duckdb"):
                 # Use field name if referenced_table is None
                 referenced_name = referenced_table_name if referenced_table_name is not None else row['field_name']
                 initial_path = f"{row['table_name']}.{referenced_name}"
-                recursive_expanded = _expand_reference_recursively(
+                recursive_extended = _expand_reference_recursively(
                     con, row.to_dict(), initial_path, set(), 5, root_field_props, logger
                 )
 
-                # Inject expanded fields immediately after the parent field
-                for expanded_field in recursive_expanded:
-                    # Generate decimal ID for expanded field
+                # Inject extended fields immediately after the parent field
+                for extended_field in recursive_extended:
+                    # Generate decimal ID for extended field
                     original_id = row['id']
-                    if original_id not in expanded_sequence:
-                        expanded_sequence[original_id] = 1
+                    if original_id not in extended_sequence:
+                        extended_sequence[original_id] = 1
                     else:
-                        expanded_sequence[original_id] += 1
+                        extended_sequence[original_id] += 1
 
-                    sequence = expanded_sequence[original_id]
+                    sequence = extended_sequence[original_id]
                     decimal_id = float(f"{original_id}.{sequence:06d}")
 
-                    # Update the expanded field with decimal ID
-                    expanded_field['id'] = decimal_id
-                    final_rows.append(expanded_field)
+                    # Update the extended field with decimal ID
+                    extended_field['id'] = decimal_id
+                    final_rows.append(extended_field)
 
-                if recursive_expanded:
-                    logger.info(f"[{row['table_name']}] Expanded reference field '{row['field_name']}' into {len(recursive_expanded)} fields")
+                if recursive_extended:
+                    logger.info(f"[{row['table_name']}] Extended reference field '{row['field_name']}' into {len(recursive_extended)} fields")
                 else:
                     logger.warning(f"[{row['table_name']}] No expansion results for reference field '{row['field_name']}' -> '{row['referenced_table']}'")
 
@@ -262,8 +262,8 @@ def export_to_database(db_path="mappings.duckdb"):
         logger.info(f"Total rows after expansion: {len(columns_df)}")
         logger.info(f"Ready to insert {len(columns_df)} total columns")
 
-        # Step 3: Insert data into knx_doc_expanded table
-        logger.info("Step 3: Inserting data into knx_doc_expanded table...")
+        # Step 3: Insert data into knx_doc_extended table
+        logger.info("Step 3: Inserting data into knx_doc_extended table...")
         insert_count = 0
         display_order = 0
 
@@ -277,12 +277,12 @@ def export_to_database(db_path="mappings.duckdb"):
             # ID is already properly formatted (decimal IDs generated during expansion)
             id_value = safe_value(row['id'])
 
-            # Insert row into knx_doc_expanded table
+            # Insert row into knx_doc_extended table
             display_order += 1
             con.execute("""
-                INSERT INTO knx_doc_expanded (
+                INSERT INTO knx_doc_extended (
                     id, table_id, table_name, field_name, description, data_type,
-                    is_key, is_calculated, referenced_table, is_expanded, display_on_export,
+                    is_key, is_calculated, referenced_table, is_extended, display_on_export,
                     created_at, referenced_table_id, display_order
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
@@ -295,7 +295,7 @@ def export_to_database(db_path="mappings.duckdb"):
                 safe_value(row['is_key']),
                 safe_value(row['is_calculated']),
                 safe_value(row['referenced_table']),
-                safe_value(row.get('is_expanded', False)),
+                safe_value(row.get('is_extended', False)),
                 safe_value(row['display_on_export']),
                 safe_value(row['created_at']),
                 safe_value(row['referenced_table_id']),
@@ -309,7 +309,7 @@ def export_to_database(db_path="mappings.duckdb"):
 
         # Commit all insertions
         con.commit()
-        logger.info(f"Successfully inserted {insert_count} rows into knx_doc_expanded table")
+        logger.info(f"Successfully inserted {insert_count} rows into knx_doc_extended table")
 
         # Run ETN CDM upsert leveraging the freshly exported data
         upserter_logger = logger.getChild("EtnCdmUpserter")
@@ -338,7 +338,7 @@ def main():
     success = export_to_database()
 
     if success:
-        print("✅ Database export successful! Data inserted into knx_doc_expanded table.")
+        print("✅ Database export successful! Data inserted into knx_doc_extended table.")
     else:
         print("❌ Database export failed. Check the logs for details.")
 
