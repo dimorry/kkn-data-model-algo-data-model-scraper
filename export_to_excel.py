@@ -432,16 +432,16 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         logger.info(f"Writing to Excel file: {output_file}")
         with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
             # Write tables to first tab
-            tables_df.to_excel(writer, sheet_name='Tables', index=False)
-            logger.info("Written tables data to 'Tables' tab")
+            tables_df.to_excel(writer, sheet_name='knx_doc_tables', index=False)
+            logger.info("Written tables data to 'knx_doc_tables' tab")
 
             # Write columns to second tab
             columns_df.to_excel(writer, sheet_name='knx_doc_extended', index=False)
             logger.info("Written columns data to 'knx_doc_extended' tab")
 
             # Write ETN doc mappings to third tab
-            mappings_df.to_excel(writer, sheet_name='ETN_Mappings', index=False)
-            logger.info("Written ETN doc mappings data to 'ETN_Mappings' tab")
+            mappings_df.to_excel(writer, sheet_name='etn_doc_mappings', index=False)
+            logger.info("Written ETN doc mappings data to 'etn_doc_mappings' tab")
 
             # Write ETN CDM data to fourth tab
             if not etn_cdm_df.empty:
