@@ -84,6 +84,20 @@ class TableDatabase:
             )
         """)
 
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS trl_doc_augmentation (
+                knx_doc_extended_id DECIMAL(10,6) PRIMARY KEY REFERENCES knx_doc_extended(id),
+                field_category VARCHAR,
+                field_view VARCHAR,
+                field_category VARCHAR,
+                field_view VARCHAR,
+                field_business_name VARCHAR,
+                SAP_table VARCHAR,
+                SAP_field VARCHAR,
+                trillium_comments VARCHAR
+            )
+        """)
+
         # Create etn_cdm table to capture canonical data model metadata
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS etn_cdm (

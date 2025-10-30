@@ -150,6 +150,33 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
 
         logger.info(f"Found {len(columns_df)} columns")
 
+        # Query comments data joined with base column metadata
+        logger.info("Querying trl_doc_augmentation data...")
+        comments_query = """
+            SELECT
+                k.table_name,
+                k.field_name,
+                c.field_category,
+                c.field_view,
+                c.field_business_name,
+                c.SAP_table,
+                c.SAP_field,
+                c.trillium_comments
+            FROM trl_doc_augmentation AS c
+            INNER JOIN knx_doc_extended AS k
+                ON c.knx_doc_extended_id = k.id
+            ORDER BY k.table_name, k.field_name
+        """
+        try:
+            comments_df = con.execute(comments_query).fetchdf()
+            logger.info("Found %d comment records linked to knx_doc_extended", len(comments_df))
+        except duckdb.CatalogException:
+            logger.warning("trl_doc_augmentation table not found; skipping comments export")
+            comments_df = pd.DataFrame(columns=[
+                'table_name', 'field_name',
+                'field_category', 'field_view', 'trillium_comments'
+            ])
+
         # Build lookup for key fields from target tables
         target_tables_upper_set = set(target_tables_upper)
         key_flags = (
@@ -408,6 +435,14 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
 
             field_category_df.to_excel(writer, sheet_name='Field Category', index=False)
             logger.info("Written Field Category metadata to 'Field Category' tab")
+
+            # Write Trillium comments linked to KNX doc extended
+            if not comments_df.empty:
+                comments_df.to_excel(writer, sheet_name='trl_doc_augmentation', index=False)
+                logger.info("Written Trillium comments to 'trl_doc_augmentation' tab")
+            else:
+                comments_df.to_excel(writer, sheet_name='trl_doc_augmentation', index=False)
+                logger.info("Created empty 'trl_doc_augmentation' tab (no data available)")
 
             # Format worksheets with text wrapping and column sizing
             from openpyxl.styles import Alignment
