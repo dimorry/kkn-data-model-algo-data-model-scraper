@@ -84,17 +84,27 @@ class TableDatabase:
             )
         """)
 
+        # Trillium augmentation tables
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS trl_doc_augmentation (
+            CREATE OR REPLACE TABLE trl_doc_augmentation (
                 knx_doc_extended_id DECIMAL(10,6) PRIMARY KEY REFERENCES knx_doc_extended(id),
-                field_category VARCHAR,
-                field_view VARCHAR,
-                field_category VARCHAR,
+                table_name VARCHAR,
+                field_name VARCHAR,
+                field_sub_domain VARCHAR,
                 field_view VARCHAR,
                 field_business_name VARCHAR,
-                SAP_table VARCHAR,
-                SAP_field VARCHAR,
+                sap_table VARCHAR,
+                sap_field VARCHAR,
                 trillium_comments VARCHAR
+            )
+        """)
+
+        self.conn.execute("""
+            CREATE OR REPLACE TABLE trl_cdm_augmentation (
+                domain VARCHAR,
+                domain_description VARCHAR,
+                entity VARCHAR,
+                entity_description VARCHAR
             )
         """)
 
