@@ -109,6 +109,18 @@ class TableDatabase:
             )
         """)
 
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS etn_cdm (
+                domain VARCHAR,
+                domain_description VARCHAR,
+                entity VARCHAR,
+                entity_description VARCHAR,
+                keys VARCHAR,
+                relationships VARCHAR,
+                applications VARCHAR
+            )
+        """)
+
         # Create etn_cdm_mappings table to capture canonical data model metadata
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS etn_cdm_mappings (

@@ -131,6 +131,7 @@ class ExcelExporter:
         )
 
         field_category_df = pd.DataFrame(FIELD_CATEGORY_METADATA, columns=["Category Name", "Description"])
+        summarized_cdm_df = self._load_summarized_cdm(con)
 
         return {
             "tables": tables_df,
@@ -140,6 +141,7 @@ class ExcelExporter:
             "mappings": mappings_df,
             "etn_cdm": etn_cdm_df,
             "field_category": field_category_df,
+            "etn_cdm_summary": summarized_cdm_df,
         }
 
     def _load_tables(
@@ -203,7 +205,7 @@ class ExcelExporter:
         raw_columns_df = columns_df.copy()
 
         id_numeric = pd.to_numeric(columns_df["id"], errors="coerce")
-        field_names = columns_df["field_name"].fillna("").astype(str).str.lstrip()
+        field_names = columns_df["field_name"].astype('string').fillna("").str.lstrip()
         extended_mask = id_numeric.notna() & id_numeric.mod(1).ne(0)
         field_names = field_names.mask(extended_mask, "    " + field_names)
         columns_df["field_name"] = field_names
@@ -301,6 +303,40 @@ class ExcelExporter:
         self.logger.info("Found %d ETN doc mappings", len(mappings_df))
         return mappings_df
 
+    def _load_summarized_cdm(self, con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+        self.logger.info("Querying summarized ETN CDM data...")
+        try:
+            df = con.execute(
+                """
+                SELECT
+                    domain,
+                    domain_description,
+                    entity,
+                    entity_description,
+                    keys,
+                    relationships,
+                    applications
+                FROM etn_cdm
+                ORDER BY domain, entity
+            """
+            ).fetchdf()
+        except duckdb.CatalogException:
+            self.logger.warning("etn_cdm table not found; creating empty export tab")
+            df = pd.DataFrame(
+                columns=[
+                    "domain",
+                    "domain_description",
+                    "entity",
+                    "entity_description",
+                    "keys",
+                    "relationships",
+                    "applications",
+                ]
+            )
+
+        self.logger.info("Found %d summarized ETN CDM rows", len(df))
+        return df
+
     def _build_key_lookup(
         self,
         raw_columns_df: pd.DataFrame,
@@ -317,7 +353,7 @@ class ExcelExporter:
         )
 
         key_columns_df = raw_columns_df[
-            raw_columns_df["table_name"].fillna("").astype(str).str.upper().isin(target_tables_upper_set) & key_flags
+            raw_columns_df["table_name"].astype('string').fillna("").str.upper().isin(target_tables_upper_set) & key_flags
         ].copy()
 
         key_columns_df["table_name_upper"] = key_columns_df["table_name"].astype(str).str.upper()
@@ -380,9 +416,9 @@ class ExcelExporter:
 
         if not etn_cdm_df.empty and table_desc_lookup and "maestro_table_name" in etn_cdm_df.columns:
             maestro_table_normalized = (
-                etn_cdm_df["maestro_table_name"].fillna("").astype(str).str.strip().str.upper()
+                etn_cdm_df["maestro_table_name"].astype('string').fillna("").str.strip().str.upper()
             )
-            existing_desc = etn_cdm_df["maestro_table_description"].fillna("").astype(str).str.strip()
+            existing_desc = etn_cdm_df["maestro_table_description"].astype('string').fillna("").str.strip()
             missing_desc_mask = existing_desc.eq("")
             mapped_descriptions = maestro_table_normalized.map(table_desc_lookup)
             fill_mask = missing_desc_mask & mapped_descriptions.notna()
@@ -395,8 +431,8 @@ class ExcelExporter:
 
         key_field_lookup = set(key_field_lookup)
         if not etn_cdm_df.empty and key_field_lookup:
-            canonical_upper = etn_cdm_df["canonical_entity_name"].fillna("").astype(str).str.upper()
-            maestro_field_upper = etn_cdm_df["maestro_field_name"].fillna("").astype(str).str.strip().str.upper()
+            canonical_upper = etn_cdm_df["canonical_entity_name"].astype('string').fillna("").str.upper()
+            maestro_field_upper = etn_cdm_df["maestro_field_name"].astype('string').fillna("").str.strip().str.upper()
             key_mask = pd.Series(
                 [(entity, field) in key_field_lookup for entity, field in zip(canonical_upper, maestro_field_upper)],
                 index=etn_cdm_df.index,
@@ -429,8 +465,8 @@ class ExcelExporter:
             )
             maestro_key_flags = (
                 etn_cdm_df["maestro_is_key"]
+                .astype('string')
                 .fillna("")
-                .astype(str)
                 .str.strip()
                 .str.upper()
                 .isin({"TRUE", "YES", "Y", "1"})
@@ -486,7 +522,7 @@ class ExcelExporter:
 
         if "Maestro Is Key" in etn_cdm_df.columns:
             maestro_key_series = (
-                etn_cdm_df["Maestro Is Key"].fillna("").astype(str).str.strip().str.lower()
+                etn_cdm_df["Maestro Is Key"].astype('string').fillna("").str.strip().str.lower()
             )
             etn_cdm_df["Maestro Is Key"] = maestro_key_series.isin({"true", "yes", "y", "1", "t"})
 
@@ -533,6 +569,22 @@ class ExcelExporter:
                     "Maestro Table Description",
                     "Canonical Attribute Name",
                     "Maestro Field Name",
+                ],
+            )
+            self._write_sheet(
+                writer,
+                "ETN CDM",
+                payload["etn_cdm_summary"],
+                empty_columns=list(payload["etn_cdm_summary"].columns)
+                if not payload["etn_cdm_summary"].empty
+                else [
+                    "domain",
+                    "domain_description",
+                    "entity",
+                    "entity_description",
+                    "keys",
+                    "relationships",
+                    "applications",
                 ],
             )
             self._write_sheet(writer, "Field Category", payload["field_category"])

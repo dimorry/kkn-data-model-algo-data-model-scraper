@@ -1,13 +1,13 @@
 import logging
 import re
-from typing import Dict, List, Optional, Tuple, Any, Iterable
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import duckdb
 import pandas as pd
 
 
-class EtnCdmUpserter:
-    """Generate and load ETN CDM records by reconciling KNX metadata with ETN mappings."""
+class EtnCdmMappingUpserter:
+    """Generate and load ETN CDM mapping records by reconciling KNX metadata with ETN mappings."""
 
     SAP_TABLE_HINTS: Dict[str, Tuple[str, str]] = {
         'kna1': ('XD03', 'Display Customer (General Data)'),
@@ -35,17 +35,17 @@ class EtnCdmUpserter:
             manage_connection = True
 
         try:
-            self.logger.info("Starting ETN CDM upsert process")
+            self.logger.info("Starting ETN CDM mapping upsert process")
 
             data = self._load_source_data(con)
             matched_rows = self._match_records(data)
             assembled_rows = self._assemble_rows(matched_rows)
 
             self._persist_rows(con, assembled_rows)
-            self.logger.info(f"Completed ETN CDM upsert with {len(assembled_rows)} rows")
+            self.logger.info("Completed ETN CDM mapping upsert with %d rows", len(assembled_rows))
 
         except Exception as exc:
-            self.logger.error(f"Failed ETN CDM upsert: {exc}")
+            self.logger.error("Failed ETN CDM mapping upsert: %s", exc)
             raise
         finally:
             if manage_connection:
@@ -120,7 +120,6 @@ class EtnCdmUpserter:
         """
         ).fetchdf()
 
-        # Preprocess KNX extended data
         knx_extended['field_name_trim'] = knx_extended['field_name'].astype(str).str.strip()
         knx_extended['data_type_lower'] = knx_extended['data_type'].astype(str).str.lower()
         knx_extended = knx_extended[~knx_extended['data_type_lower'].str.startswith('reference', na=False)].copy()
@@ -208,10 +207,11 @@ class EtnCdmUpserter:
             'source': 'ETN',
             'raw': row,
             'table_name': row.get('knx_table'),
-            'target_field_trim': target_field_trim,
+            'field_name_trim': target_field_trim,
             'normalized_tokens': tokens,
             'normalized_keys': self._generate_keys(tokens),
             'token_bag': token_bag,
+            'trl_domain': row.get('trl_domain'),
         }
 
     def _reconcile_table(
@@ -222,376 +222,79 @@ class EtnCdmUpserter:
     ) -> List[Dict[str, Any]]:
         matches: List[Dict[str, Any]] = []
 
-        etn_available = set(range(len(etn_records)))
-        knx_remaining: List[int] = []
+        for etn_record in etn_records:
+            best_match = self._find_best_match(etn_record, knx_records)
 
-        # Tier 1: direct match on trimmed names (case-insensitive)
-        direct_lookup: Dict[str, List[int]] = {}
-        for idx, etn in enumerate(etn_records):
-            key = etn['target_field_trim'].lower()
-            direct_lookup.setdefault(key, []).append(idx)
+            match_payload = {
+                'table_name': table_name,
+                'etn': etn_record,
+                'knx': best_match,
+                'match_type': 'matched' if best_match else 'unmatched'
+            }
+            matches.append(match_payload)
 
-        for k_idx, knx in enumerate(knx_records):
-            key = knx['field_name_trim'].lower()
-            candidate_indexes = direct_lookup.get(key)
-            matched = False
+        for knx_record in knx_records:
+            if any(match['knx'] is knx_record for match in matches):
+                continue
 
-            if candidate_indexes:
-                for etn_index in candidate_indexes:
-                    if etn_index in etn_available:
-                        etn_available.remove(etn_index)
-                        matches.append(self._build_match_payload(
-                            table_name, knx, etn_records[etn_index], 1,
-                            f"Direct match on field '{knx['field_name_trim']}'"
-                        ))
-                        matched = True
-                        break
-
-            if not matched:
-                knx_remaining.append(k_idx)
-
-        # Tier 2: normalized dotted key intersection (ordered)
-        still_remaining: List[int] = []
-        for k_idx in knx_remaining:
-            knx = knx_records[k_idx]
-            best_score = 0
-            best_etn_index = None
-            best_key = None
-
-            for etn_index in list(etn_available):
-                etn = etn_records[etn_index]
-                overlap = knx['normalized_keys'] & etn['normalized_keys']
-                if not overlap:
-                    continue
-
-                # Choose the longest matching key (by segments)
-                candidate_key = max(overlap, key=lambda k: (k.count('.') + 1, len(k)))
-                score = candidate_key.count('.') + 1
-
-                if score > best_score:
-                    best_score = score
-                    best_etn_index = etn_index
-                    best_key = candidate_key
-
-            if best_etn_index is not None:
-                etn_available.remove(best_etn_index)
-                matches.append(self._build_match_payload(
-                    table_name,
-                    knx,
-                    etn_records[best_etn_index],
-                    2,
-                    f"Normalized key match on '{best_key}'"
-                ))
-            else:
-                still_remaining.append(k_idx)
-
-        # Tier 3: token bag overlap (order-insensitive)
-        final_remaining: List[int] = []
-        for k_idx in still_remaining:
-            knx = knx_records[k_idx]
-            best_score = 0
-            best_etn_index = None
-            token_bag_knx = knx['token_bag']
-
-            for etn_index in list(etn_available):
-                etn = etn_records[etn_index]
-                overlap = token_bag_knx & etn['token_bag']
-                score = len(overlap)
-
-                if score > best_score and score >= 2:
-                    best_score = score
-                    best_etn_index = etn_index
-
-            if best_etn_index is not None:
-                etn_available.remove(best_etn_index)
-                etn = etn_records[best_etn_index]
-                matches.append(self._build_match_payload(
-                    table_name,
-                    knx,
-                    etn,
-                    3,
-                    f"Token overlap match with tokens {sorted(knx['token_bag'] & etn['token_bag'])}"
-                ))
-            else:
-                final_remaining.append(k_idx)
-
-        # Remaining KNX records (no match)
-        for k_idx in final_remaining:
-            matches.append(self._build_match_payload(
-                table_name,
-                knx_records[k_idx],
-                None,
-                0,
-                "No ETN match found"
-            ))
-
-        # Remaining ETN records (no match)
-        for etn_index in etn_available:
-            matches.append(self._build_match_payload(
-                table_name,
-                None,
-                etn_records[etn_index],
-                0,
-                "No KNX match found"
-            ))
+            matches.append({
+                'table_name': table_name,
+                'etn': None,
+                'knx': knx_record,
+                'match_type': 'knx_only'
+            })
 
         return matches
 
-    def _build_match_payload(
+    def _find_best_match(
         self,
-        table_name: str,
-        knx: Optional[Dict[str, Any]],
-        etn: Optional[Dict[str, Any]],
-        tier: int,
-        details: str
-    ) -> Dict[str, Any]:
-        status = 'MATCHED' if knx and etn else ('KNX_ONLY' if knx else 'ETN_ONLY')
-        return {
-            'table_name': table_name,
-            'knx': knx,
-            'etn': etn,
-            'match_tier': tier if status == 'MATCHED' else 0,
-            'match_status': status,
-            'match_details': details,
-        }
+        etn_record: Dict[str, Any],
+        knx_records: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        best_score = 0
+        best_match: Optional[Dict[str, Any]] = None
 
-    # ------------------------------------------------------------------
-    # Row Assembly
-    # ------------------------------------------------------------------
-    def _assemble_rows(self, matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        assembled: List[Dict[str, Any]] = []
+        for knx_record in knx_records:
+            score = self._score_match(etn_record, knx_record)
+            if score > best_score:
+                best_score = score
+                best_match = knx_record
 
-        for payload in matches:
-            knx = payload['knx']
-            etn = payload['etn']
+        return best_match
 
-            table_name = payload['table_name']
-            domain_name = None
-            table_description = None
-            canonical_attribute_name = None
-            maestro_field_name = None
-            maestro_field_description = None
-            maestro_data_type = None
-            maestro_is_key = False
-            information_only = False
-            standard_maestro_field = False
-            etn_target_field = None
+    def _score_match(self, etn_record: Dict[str, Any], knx_record: Dict[str, Any]) -> int:
+        score = 0
 
-            if knx:
-                canon_field = knx['field_name_trim'] or None
-                canonical_attribute_name = canon_field
-                table_description = knx.get('table_description')
-                maestro_field_name = knx.get('knx_column_field_name')
-                maestro_field_description = knx.get('knx_column_description')
-                maestro_data_type = knx.get('knx_column_data_type')
-                maestro_is_key = self._to_bool(knx.get('knx_column_is_key'))
-                standard_maestro_field = maestro_field_name is not None and pd.notna(maestro_field_name)
+        etn_tokens = set(etn_record['normalized_tokens'])
+        knx_tokens = set(knx_record['normalized_tokens'])
 
-            if etn:
-                information_only = not standard_maestro_field
-                etn_target_field = etn.get('target_field_trim') or None
-            else:
-                information_only = False
+        overlap = etn_tokens.intersection(knx_tokens)
+        score += len(overlap) * 5
 
-            final_full_field_name = None
-            for candidate in (canonical_attribute_name, maestro_field_name, etn_target_field):
-                normalized = self._safe_str(candidate)
-                if normalized:
-                    final_full_field_name = normalized
-                    break
+        if etn_record['normalized_keys'].intersection(knx_record['normalized_keys']):
+            score += 10
 
-            etn_raw = etn['raw'] if etn else None
-            if etn_raw is not None:
-                domain_name = self._safe_str(etn_raw.get('trl_domain'))
-            knx_raw = knx['raw'] if knx else None
-            knx_description = None
-            knx_data_type = None
-            if knx_raw is not None:
-                if 'description' in knx_raw:
-                    knx_description = self._safe_str(knx_raw['description'])
-                if 'data_type' in knx_raw:
-                    knx_data_type = self._safe_str(knx_raw['data_type'])
+        etn_bag = etn_record['token_bag']
+        knx_bag = knx_record['token_bag']
 
-            canonical_attribute_name = (
-                self._collapse_field_path(final_full_field_name)
-                if final_full_field_name
-                else None
-            )
-            maestro_field_name = final_full_field_name
-            canonical_attribute_name = self._safe_str(canonical_attribute_name)
-            maestro_field_name = self._safe_str(maestro_field_name)
-            maestro_field_description = self._safe_str(maestro_field_description)
-            maestro_data_type = self._safe_str(maestro_data_type)
+        bag_overlap = etn_bag.intersection(knx_bag)
+        score += len(bag_overlap) * 2
 
-            if not maestro_field_description and knx_description:
-                maestro_field_description = knx_description
+        if etn_record['field_name_trim'].lower() == knx_record['field_name_trim'].lower():
+            score += 15
 
-            if maestro_field_name and not maestro_field_description:
-                maestro_field_description = canonical_attribute_name or maestro_field_name
+        return score
 
-            if maestro_field_name and not maestro_data_type:
-                maestro_data_type = knx_data_type
-
-            source_table = self._safe_str(etn_raw['source_table']) if etn_raw is not None and 'source_table' in etn_raw else None
-            source_field = self._safe_str(etn_raw['source_field']) if etn_raw is not None and 'source_field' in etn_raw else None
-            notes = self._safe_str(etn_raw['notes']) if etn_raw is not None and 'notes' in etn_raw else None
-
-            sap_aug = self._augment_sap_info(
-                source_table=source_table,
-                source_field=source_field,
-                notes=notes,
-                maestro_table_name=table_name,
-                maestro_field_name=maestro_field_name,
-                maestro_field_description=maestro_field_description,
-            )
-
-            row = {
-                'canonical_entity_name': table_name,
-                'maestro_table_name': table_name,
-                'maestro_table_description': table_description,
-                'erp_technical_table_name': source_table,
-                'canonical_attribute_name': canonical_attribute_name,
-                'maestro_field_name': maestro_field_name,
-                'maestro_field_description': maestro_field_description,
-                'maestro_data_type': maestro_data_type,
-                'maestro_is_key': maestro_is_key,
-                'information_only': information_only,
-                'standard_maestro_field': standard_maestro_field,
-                'add_to_etl': self._should_add_to_etl(etn_raw),
-                'default_value': self._safe_str(etn_raw['constant_value']) if etn_raw is not None and 'constant_value' in etn_raw else None,
-                'example_value': self._safe_str(etn_raw['example_value']) if etn_raw is not None and 'example_value' in etn_raw else None,
-                'erp_tcode': sap_aug['erp_tcode'],
-                'erp_screen_name': sap_aug['erp_screen_name'],
-                'erp_screen_field_name': sap_aug['erp_screen_field_name'],
-                'erp_technical_table_name_secondary': None,
-                'erp_technical_field_name': source_field,
-                'etl_logic': self._safe_str(etn_raw['special_extract_logic']) if etn_raw is not None and 'special_extract_logic' in etn_raw else None,
-                'etl_transformation_table': self._safe_str(etn_raw['transformation_table_name']) if etn_raw is not None and 'transformation_table_name' in etn_raw else None,
-                'notes': notes,
-                'field_output_order': self._safe_int(etn_raw['sort_output']) if etn_raw is not None and 'sort_output' in etn_raw else None,
-                'match_status': payload['match_status'],
-                'match_tier': payload['match_tier'],
-                'match_details': payload['match_details'],
-                'sap_augmentation_strategy': sap_aug['strategy'],
-                'domain_name': domain_name,
-            }
-
-            # When there is no ETN record, ensure ETL-related fields are defaulted
-            if etn is None:
-                row.update({
-                    'erp_technical_table_name': None,
-                    'erp_technical_field_name': None,
-                    'add_to_etl': False,
-                    'default_value': None,
-                    'example_value': None,
-                    'etl_logic': None,
-                    'etl_transformation_table': None,
-                    'notes': None,
-                    'field_output_order': None,
-                    'domain_name': None,
-                })
-
-            assembled.append(row)
-
-        return assembled
-
-    # ------------------------------------------------------------------
-    # Persistence
-    # ------------------------------------------------------------------
-    def _persist_rows(self, con: duckdb.DuckDBPyConnection, rows: List[Dict[str, Any]]) -> None:
-        self._ensure_schema(con)
-
-        if not rows:
-            self.logger.warning("No ETN CDM rows generated; skipping persistence")
-            con.commit()
-            return
-
-        self.logger.debug("Deleting existing ETN CDM data")
-        con.execute("TRUNCATE TABLE etn_cdm_mappings")
-
-        columns = [
-            'canonical_entity_name',
-            'maestro_table_name',
-            'maestro_table_description',
-            'erp_technical_table_name',
-            'canonical_attribute_name',
-            'maestro_field_name',
-            'maestro_field_description',
-            'maestro_data_type',
-            'maestro_is_key',
-            'information_only',
-            'standard_maestro_field',
-            'add_to_etl',
-            'default_value',
-            'example_value',
-            'erp_tcode',
-            'erp_screen_name',
-            'erp_screen_field_name',
-            'erp_technical_table_name_secondary',
-            'erp_technical_field_name',
-            'etl_logic',
-            'etl_transformation_table',
-            'notes',
-            'field_output_order',
-            'match_status',
-            'match_tier',
-            'match_details',
-            'sap_augmentation_strategy',
-            'domain_name',
-        ]
-
-        placeholders = ', '.join(['?'] * len(columns))
-        insert_sql = f"INSERT INTO etn_cdm_mappings ({', '.join(columns)}) VALUES ({placeholders})"
-
-        for row in rows:
-            values = [row.get(col) for col in columns]
-            con.execute(insert_sql, values)
-
-        con.commit()
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-    def _ensure_schema(self, con: duckdb.DuckDBPyConnection) -> None:
-        """Ensure etn_cdm_mappings table exists with provenance columns."""
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS etn_cdm_mappings (
-                canonical_entity_name VARCHAR,
-                maestro_table_name VARCHAR,
-                maestro_table_description VARCHAR,
-                erp_technical_table_name VARCHAR,
-                canonical_attribute_name VARCHAR,
-                maestro_field_name VARCHAR,
-                maestro_field_description VARCHAR,
-                maestro_data_type VARCHAR,
-                maestro_is_key BOOLEAN,
-                information_only BOOLEAN,
-                standard_maestro_field BOOLEAN,
-                add_to_etl BOOLEAN,
-                default_value VARCHAR,
-                example_value VARCHAR,
-                erp_tcode VARCHAR,
-                erp_screen_name VARCHAR,
-                erp_screen_field_name VARCHAR,
-                erp_technical_table_name_secondary VARCHAR,
-                erp_technical_field_name VARCHAR,
-                etl_logic VARCHAR,
-                etl_transformation_table VARCHAR,
-                notes VARCHAR,
-                field_output_order INTEGER,
-                match_status VARCHAR,
-                match_tier INTEGER,
-                match_details TEXT,
-                sap_augmentation_strategy VARCHAR,
-                domain_name VARCHAR
-            )
-        """)
-
-    def _tokenize(self, value: str) -> Tuple[List[str], set]:
+    def _tokenize(self, value: Any) -> Tuple[List[str], set]:
+        if value is None:
+            return [], set()
+        if not isinstance(value, str):
+            value = str(value)
+        value = value.strip()
         if not value:
             return [], set()
 
-        parts = re.split(r'[._\s]+', value.strip())
+        parts = re.split(r'[._\s]+', value)
         normalized_segments: List[str] = []
         token_bag: set = set()
 
@@ -607,7 +310,6 @@ class EtnCdmUpserter:
             if lower == 'value':
                 continue
 
-            # plural handling
             if lower.endswith('ies') and len(lower) > 3:
                 lower = lower[:-3] + 'y'
             elif lower.endswith('ses') and len(lower) > 3:
@@ -623,7 +325,6 @@ class EtnCdmUpserter:
 
     @staticmethod
     def _split_words(segment: str) -> Iterable[str]:
-        # Split camel case and compound segments into individual words
         words = re.findall(r'[a-z]+|\d+', segment)
         return {word for word in words if word}
 
@@ -640,81 +341,207 @@ class EtnCdmUpserter:
 
         return keys
 
-    @staticmethod
-    def _safe_str(value: Any) -> Optional[str]:
-        if value is None or (isinstance(value, float) and pd.isna(value)):
-            return None
-        text = str(value).strip()
-        return text if text else None
+    # ------------------------------------------------------------------
+    # Assembly
+    # ------------------------------------------------------------------
+    def _assemble_rows(self, matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        assembled_rows: List[Dict[str, Any]] = []
+
+        for payload in matches:
+            table_name = payload['table_name']
+            etn = payload['etn']
+            knx = payload['knx']
+            match_type = payload['match_type']
+
+            if etn:
+                row = self._assemble_etn_row(table_name, etn, knx, match_type)
+            else:
+                row = self._assemble_knx_row(table_name, knx)
+
+            assembled_rows.append(row)
+
+        return assembled_rows
+
+    def _assemble_etn_row(
+        self,
+        table_name: str,
+        etn: Dict[str, Any],
+        knx: Optional[Dict[str, Any]],
+        match_type: str
+    ) -> Dict[str, Any]:
+        etn_raw = etn['raw']
+        knx_raw = knx['raw'] if knx else None
+
+        match_status = self._determine_match_status(etn_raw, knx_raw, match_type)
+        domain_name = etn_raw.get('trl_domain')
+
+        maestro_is_key = None
+        maestro_data_type = None
+        maestro_field_description = None
+
+        if knx_raw is not None:
+            maestro_is_key = self._to_bool(knx_raw.get('knx_column_is_key'))
+            maestro_data_type = knx_raw.get('knx_column_data_type')
+            maestro_field_description = knx_raw.get('knx_column_description')
+
+        assembled = {
+            'canonical_entity_name': table_name,
+            'maestro_table_name': table_name,
+            'maestro_table_description': (knx_raw.get('table_description') if knx_raw is not None else None),
+            'erp_technical_table_name': etn_raw.get('source_table'),
+            'canonical_attribute_name': etn_raw.get('target_field'),
+            'maestro_field_name': etn_raw.get('target_field'),
+            'maestro_field_description': maestro_field_description or etn_raw.get('notes'),
+            'maestro_data_type': maestro_data_type,
+            'maestro_is_key': maestro_is_key,
+            'information_only': self._to_bool(etn_raw.get('show_output')),
+            'standard_maestro_field': None,
+            'add_to_etl': self._to_bool(etn_raw.get('add_to_etl')),
+            'default_value': etn_raw.get('constant_value'),
+            'example_value': etn_raw.get('example_value'),
+            'erp_tcode': None,
+            'erp_screen_name': None,
+            'erp_screen_field_name': None,
+            'erp_technical_table_name_secondary': None,
+            'erp_technical_field_name': etn_raw.get('source_field'),
+            'etl_logic': etn_raw.get('special_extract_logic'),
+            'etl_transformation_table': etn_raw.get('transformation_table_name'),
+            'notes': etn_raw.get('notes'),
+            'field_output_order': etn_raw.get('sort_output'),
+            'match_status': match_status,
+            'match_tier': self._derive_match_tier(match_status, knx_raw),
+            'match_details': None,
+            'sap_augmentation_strategy': None,
+            'domain_name': domain_name,
+        }
+
+        sap_strategy = self._derive_sap_strategy(
+            primary_table=etn_raw.get('source_table'),
+            source_field=etn_raw.get('source_field'),
+            maestro_field_name=etn_raw.get('target_field'),
+            maestro_field_description=maestro_field_description,
+            maestro_table_name=table_name,
+        )
+
+        assembled['erp_tcode'] = sap_strategy['erp_tcode']
+        assembled['erp_screen_name'] = sap_strategy['erp_screen_name']
+        assembled['erp_screen_field_name'] = sap_strategy['erp_screen_field_name']
+        assembled['sap_augmentation_strategy'] = sap_strategy['strategy']
+
+        return assembled
+
+    def _assemble_knx_row(self, table_name: str, knx: Dict[str, Any]) -> Dict[str, Any]:
+        knx_raw = knx['raw']
+        field_name = knx_raw.get('field_name_trim') or knx_raw.get('field_name')
+
+        return {
+            'canonical_entity_name': table_name,
+            'maestro_table_name': table_name,
+            'maestro_table_description': knx_raw.get('table_description'),
+            'erp_technical_table_name': None,
+            'canonical_attribute_name': field_name,
+            'maestro_field_name': field_name,
+            'maestro_field_description': knx_raw.get('description'),
+            'maestro_data_type': knx_raw.get('data_type'),
+            'maestro_is_key': self._to_bool(knx_raw.get('is_key')),
+            'information_only': None,
+            'standard_maestro_field': None,
+            'add_to_etl': None,
+            'default_value': None,
+            'example_value': None,
+            'erp_tcode': None,
+            'erp_screen_name': None,
+            'erp_screen_field_name': None,
+            'erp_technical_table_name_secondary': None,
+            'erp_technical_field_name': None,
+            'etl_logic': None,
+            'etl_transformation_table': None,
+            'notes': None,
+            'field_output_order': None,
+            'match_status': 'KNX_ONLY',
+            'match_tier': self._derive_match_tier('KNX_ONLY', knx_raw),
+            'match_details': None,
+            'sap_augmentation_strategy': None,
+            'domain_name': None,
+        }
+
+    def _derive_match_tier(self, match_status: str, knx_raw: Optional[pd.Series]) -> Optional[int]:
+        status = (match_status or '').upper()
+        if status == 'MATCHED':
+            return 1
+        if status == 'ETN_ONLY':
+            return 2
+        if status == 'KNX_ONLY':
+            return 3
+        key_flag = str(knx_raw.get('is_key')).lower() if knx_raw is not None else ''
+        return 2 if key_flag in {'yes', 'true', 'y', '1'} else 3
+
+    def _determine_match_status(
+        self,
+        etn_raw: pd.Series,
+        knx_raw: Optional[pd.Series],
+        match_type: str
+    ) -> str:
+        if match_type == 'matched':
+            return 'MATCHED'
+        if match_type == 'knx_only':
+            return 'KNX_ONLY'
+        return 'ETN_ONLY'
 
     @staticmethod
-    def _safe_int(value: Any) -> Optional[int]:
-        if value is None or (isinstance(value, float) and pd.isna(value)):
-            return None
-        try:
-            return int(float(value))
-        except (ValueError, TypeError):
-            return None
-
-    @staticmethod
-    def _to_bool(value: Any) -> bool:
+    def _to_bool(value: Any) -> Optional[bool]:
         if value is None:
-            return False
+            return None
         if isinstance(value, bool):
             return value
-        text = str(value).strip().lower()
-        return text in {'y', 'yes', 'true', '1'}
-
-    @staticmethod
-    def _collapse_field_path(value: str) -> Optional[str]:
-        text = value.strip()
-        if not text:
-            return None
-
-        if '.' not in text:
-            return text
-
-        parts = [segment.strip() for segment in text.split('.') if segment.strip()]
-        if not parts:
-            return None
-
-        tail = parts[-2:] if len(parts) >= 2 else parts[-1:]
-        collapsed = ''.join(tail)
-        return collapsed or text
-
-    def _should_add_to_etl(self, etn_row: Optional[pd.Series]) -> bool:
-        if etn_row is None or 'show_output' not in etn_row:
+        if isinstance(value, (int, float)):
+            return bool(value)
+        value_str = str(value).strip().lower()
+        if value_str in {'true', 'yes', 'y', '1'}:
+            return True
+        if value_str in {'false', 'no', 'n', '0'}:
             return False
-        return self._to_bool(etn_row['show_output'])
+        return None
 
-    def _augment_sap_info(
+    # ------------------------------------------------------------------
+    # SAP Strategy helpers
+    # ------------------------------------------------------------------
+    def _derive_sap_strategy(
         self,
-        source_table: Optional[str],
+        primary_table: Optional[str],
         source_field: Optional[str],
-        notes: Optional[str],
-        maestro_table_name: Optional[str],
         maestro_field_name: Optional[str],
-        maestro_field_description: Optional[str]
+        maestro_field_description: Optional[str],
+        maestro_table_name: Optional[str],
     ) -> Dict[str, Optional[str]]:
-        erp_tcode: Optional[str] = None
-        erp_screen_name: Optional[str] = None
-        erp_screen_field_name: Optional[str] = None
-
-        primary_table, table_source, has_hint = self._select_sap_table([
-            ('source_table', source_table),
-            ('source_field', source_field),
-            ('notes', notes),
-            ('maestro_field_description', maestro_field_description),
-        ])
+        if not primary_table and not source_field:
+            return {
+                'erp_tcode': None,
+                'erp_screen_name': None,
+                'erp_screen_field_name': None,
+                'strategy': None,
+            }
 
         strategy_parts: List[str] = []
+        erp_tcode = None
+        erp_screen_name = None
 
-        if primary_table and has_hint:
-            hint = self.SAP_TABLE_HINTS[primary_table.lower()]
-            erp_tcode, erp_screen_name = hint
-            strategy_parts.append(f'{table_source}_table_hint')
-        elif primary_table:
-            strategy_parts.append(f'{table_source}_table_detected_no_hint')
+        primary_table, table_source, primary_confident = self._select_sap_table([
+            ('maestro_field_name', maestro_field_name),
+            ('source_field', source_field),
+            ('maestro_field_description', maestro_field_description),
+            ('maestro_table_name', maestro_table_name),
+            ('primary_table_name', primary_table),
+        ])
+
+        if primary_table:
+            erp_tcode, erp_screen_name = self.SAP_TABLE_HINTS.get(
+                primary_table.lower(),
+                (None, None)
+            )
+            strategy_parts.append(f'{table_source}_table_inferred')
+            if primary_confident:
+                strategy_parts.append('hint_confident')
 
         field_token, field_source = self._select_sap_field(
             primary_table,
@@ -727,6 +554,8 @@ class EtnCdmUpserter:
         if field_token:
             erp_screen_field_name = field_token
             strategy_parts.append(f'{field_source}_field_inferred')
+        else:
+            erp_screen_field_name = None
 
         strategy = '+'.join(strategy_parts) if strategy_parts else 'insufficient_source_metadata'
 
@@ -826,9 +655,11 @@ class EtnCdmUpserter:
         return tokens
 
     @staticmethod
-    def _tokenize_identifier_parts(value: Optional[str]) -> List[Tuple[str, str]]:
+    def _tokenize_identifier_parts(value: Optional[Any]) -> List[Tuple[str, str]]:
         if not value:
             return []
+        if not isinstance(value, str):
+            value = str(value)
         parts = re.split(r'[^A-Za-z0-9]+', value)
         tokens: List[Tuple[str, str]] = []
         for part in parts:
@@ -843,3 +674,233 @@ class EtnCdmUpserter:
         if not token or len(token) < 3:
             return False
         return bool(re.fullmatch(r'[A-Z0-9]+', token))
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+    def _persist_rows(self, con: duckdb.DuckDBPyConnection, rows: List[Dict[str, Any]]) -> None:
+        self._ensure_schema(con)
+
+        if not rows:
+            self.logger.warning("No ETN CDM mapping rows generated; skipping persistence")
+            con.commit()
+            return
+
+        self.logger.debug("Deleting existing ETN CDM mapping data")
+        con.execute("TRUNCATE TABLE etn_cdm_mappings")
+
+        columns = [
+            'canonical_entity_name',
+            'maestro_table_name',
+            'maestro_table_description',
+            'erp_technical_table_name',
+            'canonical_attribute_name',
+            'maestro_field_name',
+            'maestro_field_description',
+            'maestro_data_type',
+            'maestro_is_key',
+            'information_only',
+            'standard_maestro_field',
+            'add_to_etl',
+            'default_value',
+            'example_value',
+            'erp_tcode',
+            'erp_screen_name',
+            'erp_screen_field_name',
+            'erp_technical_table_name_secondary',
+            'erp_technical_field_name',
+            'etl_logic',
+            'etl_transformation_table',
+            'notes',
+            'field_output_order',
+            'match_status',
+            'match_tier',
+            'match_details',
+            'sap_augmentation_strategy',
+            'domain_name',
+        ]
+
+        placeholders = ', '.join(['?'] * len(columns))
+        insert_sql = f"INSERT INTO etn_cdm_mappings ({', '.join(columns)}) VALUES ({placeholders})"
+
+        for row in rows:
+            values = [row.get(col) for col in columns]
+            con.execute(insert_sql, values)
+
+        con.commit()
+
+    def _ensure_schema(self, con: duckdb.DuckDBPyConnection) -> None:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS etn_cdm_mappings (
+                canonical_entity_name VARCHAR,
+                maestro_table_name VARCHAR,
+                maestro_table_description VARCHAR,
+                erp_technical_table_name VARCHAR,
+                canonical_attribute_name VARCHAR,
+                maestro_field_name VARCHAR,
+                maestro_field_description VARCHAR,
+                maestro_data_type VARCHAR,
+                maestro_is_key BOOLEAN,
+                information_only BOOLEAN,
+                standard_maestro_field BOOLEAN,
+                add_to_etl BOOLEAN,
+                default_value VARCHAR,
+                example_value VARCHAR,
+                erp_tcode VARCHAR,
+                erp_screen_name VARCHAR,
+                erp_screen_field_name VARCHAR,
+                erp_technical_table_name_secondary VARCHAR,
+                erp_technical_field_name VARCHAR,
+                etl_logic VARCHAR,
+                etl_transformation_table VARCHAR,
+                notes VARCHAR,
+                field_output_order INTEGER,
+                match_status VARCHAR,
+                match_tier INTEGER,
+                match_details TEXT,
+                sap_augmentation_strategy VARCHAR,
+                domain_name VARCHAR
+            )
+        """)
+
+
+class EtnCdmUpserter:
+    """Populate the summarized etn_cdm table from Trillium augmentation and KNX metadata."""
+
+    def __init__(self, db_path: str = "mappings.duckdb", logger: Optional[logging.Logger] = None):
+        self.db_path = db_path
+        self.logger = logger or logging.getLogger(__name__)
+
+    def run(self, con: Optional[duckdb.DuckDBPyConnection] = None) -> None:
+        manage_connection = False
+
+        if con is None:
+            con = duckdb.connect(self.db_path)
+            manage_connection = True
+
+        try:
+            self.logger.info("Starting ETN CDM aggregation upsert")
+            cdm_df = self._load_trl_cdm_augmentation(con)
+            if cdm_df.empty:
+                self.logger.warning("trl_cdm_augmentation table is empty; clearing etn_cdm")
+                self._persist_rows(con, [])
+                return
+
+            keys_lookup = self._build_keys_lookup(con)
+            relationships_lookup = self._build_relationships_lookup(con)
+            rows = self._assemble_rows(cdm_df, keys_lookup, relationships_lookup)
+            self._persist_rows(con, rows)
+            self.logger.info("Completed ETN CDM aggregation upsert with %d rows", len(rows))
+        finally:
+            if manage_connection:
+                con.close()
+
+    def _load_trl_cdm_augmentation(self, con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+        return con.execute(
+            """
+            SELECT
+                domain,
+                domain_description,
+                entity,
+                entity_description,
+                applications
+            FROM trl_cdm_augmentation
+        """
+        ).fetchdf()
+
+    def _build_keys_lookup(self, con: duckdb.DuckDBPyConnection) -> Dict[str, str]:
+        keys_df = con.execute(
+            """
+            SELECT
+                upper(trim(t.name)) AS table_name_upper,
+                string_agg(c.field_name, ', ') AS keys
+            FROM knx_doc_columns AS c
+            JOIN knx_doc_tables AS t ON c.table_id = t.id
+            WHERE lower(trim(coalesce(c.is_key, ''))) IN ('yes', 'y', 'true', '1')
+            GROUP BY table_name_upper
+        """
+        ).fetchdf()
+        return {
+            row['table_name_upper']: row['keys']
+            for _, row in keys_df.iterrows()
+            if row['table_name_upper']
+        }
+
+    def _build_relationships_lookup(self, con: duckdb.DuckDBPyConnection) -> Dict[str, str]:
+        relationships_df = con.execute(
+            """
+            SELECT
+                upper(trim(t.name)) AS table_name_upper,
+                string_agg(c.field_name || ' -> ' || coalesce(rt.name, ''), ', ') AS relationships
+            FROM knx_doc_columns AS c
+            JOIN knx_doc_tables AS t ON c.table_id = t.id
+            LEFT JOIN knx_doc_tables AS rt ON c.referenced_table_id = rt.id
+            WHERE lower(trim(coalesce(c.data_type, ''))) LIKE 'reference%'
+            GROUP BY table_name_upper
+        """
+        ).fetchdf()
+        return {
+            row['table_name_upper']: row['relationships']
+            for _, row in relationships_df.iterrows()
+            if row['table_name_upper']
+        }
+
+    def _assemble_rows(
+        self,
+        cdm_df: pd.DataFrame,
+        keys_lookup: Dict[str, str],
+        relationships_lookup: Dict[str, str],
+    ) -> List[Dict[str, Optional[str]]]:
+        rows: List[Dict[str, Optional[str]]] = []
+        for _, record in cdm_df.iterrows():
+            entity = record.get('entity')
+            entity_upper = entity.strip().upper() if isinstance(entity, str) else None
+            rows.append(
+                {
+                    'domain': record.get('domain'),
+                    'domain_description': record.get('domain_description'),
+                    'entity': entity,
+                    'entity_description': record.get('entity_description'),
+                    'keys': keys_lookup.get(entity_upper, '') if entity_upper else '',
+                    'relationships': relationships_lookup.get(entity_upper, '') if entity_upper else '',
+                    'applications': record.get('applications'),
+                }
+            )
+        return rows
+
+    def _persist_rows(self, con: duckdb.DuckDBPyConnection, rows: List[Dict[str, Optional[str]]]) -> None:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS etn_cdm (
+                domain VARCHAR,
+                domain_description VARCHAR,
+                entity VARCHAR,
+                entity_description VARCHAR,
+                keys VARCHAR,
+                relationships VARCHAR,
+                applications VARCHAR
+            )
+        """
+        )
+        con.execute("TRUNCATE TABLE etn_cdm")
+
+        if not rows:
+            con.commit()
+            return
+
+        columns = [
+            'domain',
+            'domain_description',
+            'entity',
+            'entity_description',
+            'keys',
+            'relationships',
+            'applications',
+        ]
+        placeholders = ', '.join(['?'] * len(columns))
+        insert_sql = f"INSERT INTO etn_cdm ({', '.join(columns)}) VALUES ({placeholders})"
+
+        for row in rows:
+            con.execute(insert_sql, [row.get(col) for col in columns])
+
+        con.commit()

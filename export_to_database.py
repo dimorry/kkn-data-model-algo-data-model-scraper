@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 from logger_config import LoggerConfig
-from etn_cdm_upserter import EtnCdmUpserter
+from etn_cdm_upserter import EtnCdmMappingUpserter, EtnCdmUpserter
 from extend_knx_doc import ExtendKnxDoc
 
 
@@ -39,11 +39,17 @@ def export_to_database(db_path="mappings.duckdb"):
         insert_count = extender.run()
         logger.info("Extend Kinaxis Doc completed")
 
-        # Run ETN CDM upsert leveraging the freshly exported data
-        upserter_logger = logger.getChild("EtnCdmUpserter")
-        etn_cdm_upserter = EtnCdmUpserter(db_path=db_path, logger=upserter_logger)
+        # Run ETN CDM mapping upsert using the freshly exported data
+        mapping_upserter_logger = logger.getChild("EtnCdmMappingUpserter")
+        mapping_upserter = EtnCdmMappingUpserter(db_path=db_path, logger=mapping_upserter_logger)
+        mapping_upserter.run(con)
+        logger.info("ETN CDM mapping upsert completed")
+
+        # Summarize Trillium augmentation into the etn_cdm table
+        cdm_upserter_logger = logger.getChild("EtnCdmUpserter")
+        etn_cdm_upserter = EtnCdmUpserter(db_path=db_path, logger=cdm_upserter_logger)
         etn_cdm_upserter.run(con)
-        logger.info("ETN CDM upsert completed")
+        logger.info("ETN CDM aggregation upsert completed")
 
         con.close()
 
