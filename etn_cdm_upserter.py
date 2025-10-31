@@ -503,12 +503,11 @@ class EtnCdmUpserter:
 
         if not rows:
             self.logger.warning("No ETN CDM rows generated; skipping persistence")
-            con.execute("DELETE FROM etn_cdm")
             con.commit()
             return
 
         self.logger.debug("Deleting existing ETN CDM data")
-        con.execute("DELETE FROM etn_cdm")
+        con.execute("TRUNCATE TABLE etn_cdm_mappings")
 
         columns = [
             'canonical_entity_name',
@@ -542,7 +541,7 @@ class EtnCdmUpserter:
         ]
 
         placeholders = ', '.join(['?'] * len(columns))
-        insert_sql = f"INSERT INTO etn_cdm ({', '.join(columns)}) VALUES ({placeholders})"
+        insert_sql = f"INSERT INTO etn_cdm_mappings ({', '.join(columns)}) VALUES ({placeholders})"
 
         for row in rows:
             values = [row.get(col) for col in columns]
@@ -554,9 +553,9 @@ class EtnCdmUpserter:
     # Helpers
     # ------------------------------------------------------------------
     def _ensure_schema(self, con: duckdb.DuckDBPyConnection) -> None:
-        """Ensure etn_cdm table exists with provenance columns."""
+        """Ensure etn_cdm_mappings table exists with provenance columns."""
         con.execute("""
-            CREATE TABLE IF NOT EXISTS etn_cdm (
+            CREATE TABLE IF NOT EXISTS etn_cdm_mappings (
                 canonical_entity_name VARCHAR,
                 maestro_table_name VARCHAR,
                 maestro_table_description VARCHAR,
@@ -587,13 +586,6 @@ class EtnCdmUpserter:
                 domain_name VARCHAR
             )
         """)
-
-        con.execute("ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS match_status VARCHAR")
-        con.execute("ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS match_tier INTEGER")
-        con.execute("ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS match_details TEXT")
-        con.execute("ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS sap_augmentation_strategy VARCHAR")
-        con.execute("ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS domain_name VARCHAR")
-        con.execute("ALTER TABLE etn_cdm DROP COLUMN IF EXISTS domain_description")
 
     def _tokenize(self, value: str) -> Tuple[List[str], set]:
         if not value:

@@ -109,9 +109,9 @@ class TableDatabase:
             )
         """)
 
-        # Create etn_cdm table to capture canonical data model metadata
+        # Create etn_cdm_mappings table to capture canonical data model metadata
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS etn_cdm (
+            CREATE TABLE IF NOT EXISTS etn_cdm_mappings (
                 canonical_entity_name VARCHAR,
                 maestro_table_name VARCHAR,
                 maestro_table_description VARCHAR,

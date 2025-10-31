@@ -283,7 +283,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                 match_tier,
                 match_details,
                 sap_augmentation_strategy
-            FROM etn_cdm
+            FROM etn_cdm_mappings
         """
         etn_cdm_df = con.execute(etn_cdm_query).fetchdf()
 
@@ -469,12 +469,12 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
 
             # Write ETN CDM data to fourth tab
             if not etn_cdm_df.empty:
-                etn_cdm_df.to_excel(writer, sheet_name='ETN_CDM', index=False)
-                logger.info("Written ETN CDM data to 'ETN_CDM' tab")
+                etn_cdm_df.to_excel(writer, sheet_name='ETN CDM Mappings', index=False)
+                logger.info("Written ETN CDM data to 'ETN CDM Mappings' tab")
             else:
                 empty_df = pd.DataFrame(columns=list(etn_cdm_columns.values()))
-                empty_df.to_excel(writer, sheet_name='ETN_CDM', index=False)
-                logger.info("Created empty 'ETN_CDM' tab (no data available)")
+                empty_df.to_excel(writer, sheet_name='ETN CDM Mappings', index=False)
+                logger.info("Created empty 'ETN CDM Mappings' tab (no data available)")
 
             field_category_df.to_excel(writer, sheet_name='Field Category', index=False)
             logger.info("Written Field Category metadata to 'Field Category' tab")
