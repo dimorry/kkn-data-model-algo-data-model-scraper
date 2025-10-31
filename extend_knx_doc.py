@@ -17,21 +17,12 @@ class ExtendKnxDoc:
 
     def run(self) -> int:
         """Populate the knx_doc_extended table and return the number of inserted rows."""
-        self._truncate_knx_doc_extended()
+        self.con.execute("TRUNCATE TABLE knx_doc_extended;")
         base_columns_df = self._fetch_base_columns()
         columns_df = self._build_final_rows(base_columns_df)
         insert_count = self._insert_rows(columns_df)
         self.con.commit()
         return insert_count
-
-    def _truncate_knx_doc_extended(self):
-        self.logger.info("Clearing existing data from knx_doc_extended table...")
-        try:
-            self.con.execute("DELETE FROM trl_doc_augmentation;")
-        except Exception as err:
-            self.logger.debug("Unable to clear trl_doc_augmentation before refresh: %s", err)
-        self.con.execute("DELETE FROM knx_doc_extended;")
-        self.logger.info("Cleared existing data from knx_doc_extended table")
 
     def _fetch_base_columns(self) -> pd.DataFrame:
         self.logger.info("Step 1: Querying base columns with proper ordering...")
