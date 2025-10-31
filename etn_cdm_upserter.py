@@ -1,5 +1,6 @@
 import logging
 import re
+from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import duckdb
@@ -831,18 +832,57 @@ class EtnCdmUpserter:
             """
             SELECT
                 upper(trim(t.name)) AS table_name_upper,
-                string_agg(c.field_name || ' -> ' || coalesce(rt.name, ''), ', ') AS relationships
+                c.field_name,
+                coalesce(rt.name, '') AS referenced_table_name,
+                c.description
             FROM knx_doc_columns AS c
             JOIN knx_doc_tables AS t ON c.table_id = t.id
             LEFT JOIN knx_doc_tables AS rt ON c.referenced_table_id = rt.id
             WHERE lower(trim(coalesce(c.data_type, ''))) LIKE 'reference%'
-            GROUP BY table_name_upper
         """
         ).fetchdf()
+
+        relationships: Dict[str, List[str]] = defaultdict(list)
+        table_name_pattern = re.compile(r'^[A-Za-z0-9_]+')
+
+        def normalize_table_name(raw_value: object) -> str:
+            if not isinstance(raw_value, str):
+                return ""
+            text = raw_value.strip()
+            if not text:
+                return ""
+            match = table_name_pattern.match(text)
+            if match:
+                return match.group(0)
+            parts = text.split()
+            return parts[0] if parts else ""
+
+        for _, row in relationships_df.iterrows():
+            table_name_upper = row.get('table_name_upper')
+            if not table_name_upper:
+                continue
+
+            field_name = str(row.get('field_name', '') or '').strip()
+            if not field_name:
+                continue
+
+            referenced_table = normalize_table_name(row.get('referenced_table_name', ''))
+            if not referenced_table:
+                description = row.get('description')
+                if isinstance(description, str):
+                    match = re.search(r'Referenced table:\s*([^\n\r;]+)', description, flags=re.IGNORECASE)
+                    if match:
+                        referenced_table = normalize_table_name(match.group(1))
+
+            if not referenced_table:
+                continue
+
+            relationships[table_name_upper].append(f"{field_name} -> {referenced_table}")
+
         return {
-            row['table_name_upper']: row['relationships']
-            for _, row in relationships_df.iterrows()
-            if row['table_name_upper']
+            table: ', '.join(entries)
+            for table, entries in relationships.items()
+            if entries
         }
 
     def _assemble_rows(

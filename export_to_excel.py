@@ -335,7 +335,24 @@ class ExcelExporter:
             )
 
         self.logger.info("Found %d summarized ETN CDM rows", len(df))
+        if not df.empty and "relationships" in df.columns:
+            df["relationships"] = df["relationships"].apply(self._format_relationships_cell)
         return df
+
+    @staticmethod
+    def _format_relationships_cell(value: object) -> str:
+        if value is None or pd.isna(value):
+            return ""
+
+        text = str(value).strip()
+        if not text:
+            return ""
+
+        if "\n" in text:
+            return text
+
+        parts = [part.strip() for part in text.split(",") if part.strip()]
+        return "\n".join(parts)
 
     def _build_key_lookup(
         self,
