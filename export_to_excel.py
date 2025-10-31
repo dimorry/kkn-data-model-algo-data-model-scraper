@@ -202,7 +202,8 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                     domain,
                     domain_description,
                     entity,
-                    entity_description
+                    entity_description,
+                    applications
                 FROM trl_cdm_augmentation
                 ORDER BY domain, entity
             """).fetchdf()
@@ -210,7 +211,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         except duckdb.CatalogException:
             logger.warning("trl_cdm_augmentation table not found; skipping CDM augmentation export")
             cdm_augmentation_df = pd.DataFrame(columns=[
-                'domain', 'domain_description', 'entity', 'entity_description'
+                'domain', 'domain_description', 'entity', 'entity_description', 'applications'
             ])
 
         # Build lookup for key fields from target tables

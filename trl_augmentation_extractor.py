@@ -40,7 +40,8 @@ class TrlAugmentationExtractor:
             "domain",
             "domain_description",
             "entity",
-            "entity_description"
+            "entity_description",
+            "applications"
         ]
 
     # ------------------------------------------------------------------ #

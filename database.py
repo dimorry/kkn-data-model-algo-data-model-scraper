@@ -85,9 +85,9 @@ class TableDatabase:
         """)
 
         # Trillium augmentation tables
+        
         self.conn.execute("""
-            CREATE OR REPLACE TABLE trl_doc_augmentation (
-                knx_doc_extended_id DECIMAL(10,6) PRIMARY KEY REFERENCES knx_doc_extended(id),
+            CREATE TABLE IF NOT EXISTS trl_doc_augmentation (
                 table_name VARCHAR,
                 field_name VARCHAR,
                 field_sub_domain VARCHAR,
@@ -104,7 +104,8 @@ class TableDatabase:
                 domain VARCHAR,
                 domain_description VARCHAR,
                 entity VARCHAR,
-                entity_description VARCHAR
+                entity_description VARCHAR,
+                applications VARCHAR
             )
         """)
 
@@ -139,20 +140,6 @@ class TableDatabase:
                 match_details TEXT,
                 sap_augmentation_strategy VARCHAR
             )
-        """)
-
-        # Ensure provenance columns exist when upgrading existing databases
-        self.conn.execute("""
-            ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS match_status VARCHAR
-        """)
-        self.conn.execute("""
-            ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS match_tier INTEGER
-        """)
-        self.conn.execute("""
-            ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS match_details TEXT
-        """)
-        self.conn.execute("""
-            ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS sap_augmentation_strategy VARCHAR
         """)
 
         self.conn.commit()

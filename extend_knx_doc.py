@@ -26,6 +26,10 @@ class ExtendKnxDoc:
 
     def _truncate_knx_doc_extended(self):
         self.logger.info("Clearing existing data from knx_doc_extended table...")
+        try:
+            self.con.execute("DELETE FROM trl_doc_augmentation;")
+        except Exception as err:
+            self.logger.debug("Unable to clear trl_doc_augmentation before refresh: %s", err)
         self.con.execute("DELETE FROM knx_doc_extended;")
         self.logger.info("Cleared existing data from knx_doc_extended table")
 
