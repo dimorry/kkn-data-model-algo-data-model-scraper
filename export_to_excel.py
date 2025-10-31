@@ -10,23 +10,39 @@ from pathlib import Path
 from logger_config import LoggerConfig
 
 TARGET_TABLES = [
+    "Allocation",
+    "AlternatePart",
     "BillOfMaterial",
     "BOMAlternate",
+    "BuyerCode",
     "Calendar",
     "CalendarDate",
+    "Constraint",
+    "ConstrainAvailable",
     "Customer",
+    "DemandOrder",
+    "HistoricalDemandHeader",
+    "HistoricalDemandActual",
+    "HistoricalReceipt",
+    "HistoricalReceiptHeader",
+    "HistoricalSupplyHeader",
+    "HistoricalSupplyActual",
     "IndependentDemand",
     "OnHand",
     "Operation",    
     "Part",
     "PartCustomer",
     "PartSource",
+    "PartSupplier",
+    "PlannerCode",
     "ReferencePart",
     "Site",
     "ScheduledReceipt",
     "Source",
+    "SourceConstraint",
     "Supplier",
-    "Routing",    
+    "SupplyOrder",
+    "Routing", 
 ]
 
 FIELD_CATEGORY_METADATA = [
@@ -164,7 +180,8 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
                 c.trillium_comments
             FROM trl_doc_augmentation AS c
             INNER JOIN knx_doc_extended AS k
-                ON c.knx_doc_extended_id = k.id
+                ON c.table_name = k.table_name
+                AND c.field_name = k.field_name
             ORDER BY k.table_name, k.field_name
         """
         try:
@@ -237,6 +254,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
 
         etn_cdm_query = """
             SELECT
+                domain_name,
                 canonical_entity_name,
                 maestro_table_name,
                 maestro_table_description,
@@ -348,6 +366,7 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
             )
 
         etn_cdm_columns = {
+            'domain_name': 'Domain Name',
             'canonical_entity_name': 'Canonical Entity Name',
             'maestro_table_name': 'Maestro Table Name',
             'maestro_table_description': 'Maestro Table Description',
@@ -378,6 +397,10 @@ def export_to_excel(db_path="mappings.duckdb", output_file="tables_export.xlsx",
         }
 
         etn_cdm_df = etn_cdm_df.rename(columns=etn_cdm_columns)
+
+        if 'Domain Name' in etn_cdm_df.columns:
+            reordered_columns = ['Domain Name'] + [col for col in etn_cdm_df.columns if col != 'Domain Name']
+            etn_cdm_df = etn_cdm_df[reordered_columns]
 
         if 'Maestro Is Key' in etn_cdm_df.columns:
             maestro_key_series = (

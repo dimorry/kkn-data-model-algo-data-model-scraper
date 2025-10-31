@@ -101,19 +101,22 @@ class EtnCdmUpserter:
         etn_mappings = con.execute(
             """
             SELECT
-                id,
-                knx_table,
-                target_field,
-                source_table,
-                source_field,
-                special_extract_logic,
-                transformation_table_name,
-                constant_value,
-                example_value,
-                notes,
-                show_output,
-                sort_output
-            FROM etn_doc_mappings
+                m.id,
+                m.knx_table,
+                m.target_field,
+                m.source_table,
+                m.source_field,
+                m.special_extract_logic,
+                m.transformation_table_name,
+                m.constant_value,
+                m.example_value,
+                m.notes,
+                m.show_output,
+                m.sort_output,
+                t.domain AS trl_domain
+            FROM etn_doc_mappings AS m
+            LEFT JOIN trl_cdm_augmentation AS t
+                ON lower(trim(m.knx_table)) = lower(trim(t.entity))
         """
         ).fetchdf()
 
@@ -363,6 +366,7 @@ class EtnCdmUpserter:
             etn = payload['etn']
 
             table_name = payload['table_name']
+            domain_name = None
             table_description = None
             canonical_attribute_name = None
             maestro_field_name = None
@@ -397,6 +401,8 @@ class EtnCdmUpserter:
                     break
 
             etn_raw = etn['raw'] if etn else None
+            if etn_raw is not None:
+                domain_name = self._safe_str(etn_raw.get('trl_domain'))
             knx_raw = knx['raw'] if knx else None
             knx_description = None
             knx_data_type = None
@@ -467,6 +473,7 @@ class EtnCdmUpserter:
                 'match_tier': payload['match_tier'],
                 'match_details': payload['match_details'],
                 'sap_augmentation_strategy': sap_aug['strategy'],
+                'domain_name': domain_name,
             }
 
             # When there is no ETN record, ensure ETL-related fields are defaulted
@@ -481,6 +488,7 @@ class EtnCdmUpserter:
                     'etl_transformation_table': None,
                     'notes': None,
                     'field_output_order': None,
+                    'domain_name': None,
                 })
 
             assembled.append(row)
@@ -530,6 +538,7 @@ class EtnCdmUpserter:
             'match_tier',
             'match_details',
             'sap_augmentation_strategy',
+            'domain_name',
         ]
 
         placeholders = ', '.join(['?'] * len(columns))
@@ -574,7 +583,8 @@ class EtnCdmUpserter:
                 match_status VARCHAR,
                 match_tier INTEGER,
                 match_details TEXT,
-                sap_augmentation_strategy VARCHAR
+                sap_augmentation_strategy VARCHAR,
+                domain_name VARCHAR
             )
         """)
 
@@ -582,6 +592,8 @@ class EtnCdmUpserter:
         con.execute("ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS match_tier INTEGER")
         con.execute("ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS match_details TEXT")
         con.execute("ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS sap_augmentation_strategy VARCHAR")
+        con.execute("ALTER TABLE etn_cdm ADD COLUMN IF NOT EXISTS domain_name VARCHAR")
+        con.execute("ALTER TABLE etn_cdm DROP COLUMN IF EXISTS domain_description")
 
     def _tokenize(self, value: str) -> Tuple[List[str], set]:
         if not value:
